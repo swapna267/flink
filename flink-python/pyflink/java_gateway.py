@@ -178,7 +178,15 @@ class PythonFunctionFactory(object):
     """
 
     def getPythonFunction(self, moduleName, objectName):
-        udf_wrapper = getattr(importlib.import_module(moduleName), objectName)
+        module = importlib.import_module(moduleName)
+        udf_wrapper = getattr(module, objectName)
+        
+        # Check if this is a PredictFunction class and auto-create UDTF
+        if (isinstance(udf_wrapper, type) and 
+            hasattr(udf_wrapper, 'create_udtf') and 
+            hasattr(udf_wrapper, 'predict')):
+            udf_wrapper = udf_wrapper.create_udtf()
+            
         return udf_wrapper._java_user_defined_function()
 
     class Java:

@@ -164,6 +164,11 @@ class TableFunctionOperation(BaseOperation):
                              variable_dict)
         return generate_func, user_defined_funcs
 
+    def set_model_config(self, config: str):
+        for user_defined_func in self.user_defined_funcs:
+            if hasattr(user_defined_func, 'set_model_config'):
+                user_defined_func.set_model_config(config)
+
 
 class PandasAggregateFunctionOperation(BaseOperation):
     def __init__(self, serialized_fn):
