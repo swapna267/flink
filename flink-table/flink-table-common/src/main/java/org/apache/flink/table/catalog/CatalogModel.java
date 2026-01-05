@@ -53,6 +53,14 @@ public interface CatalogModel {
     String getComment();
 
     /**
+     * Get the language of the model.
+     *
+     * @return language of the model (e.g., "PYTHON", "JAVA"), or null if not specified.
+     */
+    @Nullable
+    String getLanguage();
+
+    /**
      * Get a deep copy of the CatalogModel instance.
      *
      * @return a copy of the CatalogModel instance
@@ -73,12 +81,30 @@ public interface CatalogModel {
      * @param outputSchema unresolved output schema
      * @param modelOptions model options
      * @param comment optional comment
+     * @param language optional language (e.g., "PYTHON", "JAVA")
+     */
+    static CatalogModel of(
+            Schema inputSchema,
+            Schema outputSchema,
+            Map<String, String> modelOptions,
+            @Nullable String comment,
+            @Nullable String language) {
+        return new DefaultCatalogModel(inputSchema, outputSchema, modelOptions, comment, language);
+    }
+
+    /**
+     * Creates a basic implementation of this interface without language.
+     *
+     * @param inputSchema unresolved input schema
+     * @param outputSchema unresolved output schema
+     * @param modelOptions model options
+     * @param comment optional comment
      */
     static CatalogModel of(
             Schema inputSchema,
             Schema outputSchema,
             Map<String, String> modelOptions,
             @Nullable String comment) {
-        return new DefaultCatalogModel(inputSchema, outputSchema, modelOptions, comment);
+        return new DefaultCatalogModel(inputSchema, outputSchema, modelOptions, comment, null);
     }
 }

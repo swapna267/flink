@@ -96,6 +96,11 @@ public final class DefaultResolvedCatalogModel implements ResolvedCatalogModel, 
     }
 
     @Override
+    public String getLanguage() {
+        return origin.getLanguage();
+    }
+
+    @Override
     public ResolvedCatalogModel copy() {
         return new DefaultResolvedCatalogModel(
                 origin.copy(), resolvedInputSchema, resolvedOutputSchema);

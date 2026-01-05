@@ -55,6 +55,27 @@ from pyflink.fn_execution.metrics.process.metric_impl import GenericMetricGroup
 
 from pyflink.table import FunctionContext, Row
 
+
+def _merge_model_parameters_with_job_parameters(udfs, job_parameters):
+    """
+    Merges model_parameters from UDFs with job_parameters.
+    Model parameters take precedence over job parameters when keys overlap.
+    
+    :param udfs: List of UDF protobuf messages
+    :param job_parameters: Dictionary of job parameters
+    :return: Dictionary with merged parameters
+    """
+    merged_parameters = job_parameters.copy()
+    
+    for udf in udfs:
+        if hasattr(udf, 'model_context') and udf.HasField('model_context'):
+            model_context = udf.model_context
+            for model_param in model_context.model_parameters:
+                # Model parameters take precedence over job parameters
+                merged_parameters[model_param.key] = model_param.value
+    
+    return merged_parameters
+
 # UDF
 SCALAR_FUNCTION_URN = "flink:transform:scalar_function:v1"
 
@@ -84,7 +105,9 @@ class BaseOperation(Operation):
         else:
             self.base_metric_group = None
         self.func, self.user_defined_funcs = self.generate_func(serialized_fn)
-        self.job_parameters = {p.key: p.value for p in serialized_fn.job_parameters}
+        job_parameters = {p.key: p.value for p in serialized_fn.job_parameters}
+        # Merge model_parameters with job_parameters, giving precedence to model_parameters
+        self.job_parameters = _merge_model_parameters_with_job_parameters(serialized_fn.udfs, job_parameters)
 
     def finish(self):
         self._update_gauge(self.base_metric_group)
@@ -325,7 +348,9 @@ class AbstractStreamGroupAggregateOperation(BaseStatefulOperation):
         self.state_cache_size = serialized_fn.state_cache_size
         self.state_cleaning_enabled = serialized_fn.state_cleaning_enabled
         self.data_view_specs = extract_data_view_specs(serialized_fn.udfs)
-        self.job_parameters = {p.key: p.value for p in serialized_fn.job_parameters}
+        job_parameters = {p.key: p.value for p in serialized_fn.job_parameters}
+        # Merge model_parameters with job_parameters, giving precedence to model_parameters
+        self.job_parameters = _merge_model_parameters_with_job_parameters(serialized_fn.udfs, job_parameters)
         super(AbstractStreamGroupAggregateOperation, self).__init__(
             serialized_fn, keyed_state_backend)
 

@@ -41,6 +41,8 @@ import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.util.Preconditions;
 
+import java.util.Map;
+
 import static org.apache.flink.python.PythonOptions.PYTHON_METRIC_ENABLED;
 import static org.apache.flink.python.PythonOptions.PYTHON_PROFILE_ENABLED;
 import static org.apache.flink.python.util.ProtoUtils.createFlattenRowTypeCoderInfoDescriptorProto;
@@ -90,6 +92,9 @@ public class PythonTableFunctionOperator
     /** Whether the current received data is the finished result of the current input element. */
     private transient boolean isFinishResult;
 
+    /** The model configuration as key/value pairs. */
+    private final Map<String, String> modelConfig;
+
     public PythonTableFunctionOperator(
             Configuration config,
             PythonFunctionInfo tableFunction,
@@ -98,6 +103,26 @@ public class PythonTableFunctionOperator
             RowType udfOutputType,
             FlinkJoinType joinType,
             GeneratedProjection udtfInputGeneratedProjection) {
+        this(
+                config,
+                tableFunction,
+                inputType,
+                udfInputType,
+                udfOutputType,
+                joinType,
+                udtfInputGeneratedProjection,
+                null);
+    }
+
+    public PythonTableFunctionOperator(
+            Configuration config,
+            PythonFunctionInfo tableFunction,
+            RowType inputType,
+            RowType udfInputType,
+            RowType udfOutputType,
+            FlinkJoinType joinType,
+            GeneratedProjection udtfInputGeneratedProjection,
+            Map<String, String> modelConfig) {
         super(config, inputType, udfInputType, udfOutputType);
         this.tableFunction = Preconditions.checkNotNull(tableFunction);
         Preconditions.checkArgument(
@@ -106,6 +131,7 @@ public class PythonTableFunctionOperator
         this.joinType = joinType;
         this.udtfInputGeneratedProjection =
                 Preconditions.checkNotNull(udtfInputGeneratedProjection);
+        this.modelConfig = modelConfig;
     }
 
     @Override
@@ -160,7 +186,8 @@ public class PythonTableFunctionOperator
                 getRuntimeContext(),
                 new PythonFunctionInfo[] {tableFunction},
                 config.get(PYTHON_METRIC_ENABLED),
-                config.get(PYTHON_PROFILE_ENABLED));
+                config.get(PYTHON_PROFILE_ENABLED),
+                modelConfig);
     }
 
     @Override

@@ -55,6 +55,7 @@ import org.apache.calcite.rex.RexNode;
 import java.lang.reflect.Constructor;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 
@@ -72,6 +73,12 @@ public abstract class CommonExecPythonCorrelate extends ExecNodeBase<RowData>
 
     private static final String EMBEDDED_PYTHON_TABLE_FUNCTION_OPERATOR_NAME =
             "org.apache.flink.table.runtime.operators.python.table.EmbeddedPythonTableFunctionOperator";
+
+    private static final String PYTHON_PREDICT_FUNCTION_OPERATOR_NAME =
+            "org.apache.flink.table.runtime.operators.python.table.PythonPredictFunctionOperator";
+
+    private static final String EMBEDDED_PYTHON_PREDICT_FUNCTION_OPERATOR_NAME =
+            "org.apache.flink.table.runtime.operators.python.table.EmbeddedPythonPredictFunctionOperator";
 
     @JsonProperty(FIELD_NAME_JOIN_TYPE)
     private final FlinkJoinType joinType;
@@ -140,7 +147,8 @@ public abstract class CommonExecPythonCorrelate extends ExecNodeBase<RowData>
                         pythonOperatorInputRowType,
                         pythonOperatorOutputRowType,
                         pythonFunctionInfo,
-                        pythonUdtfInputOffsets);
+                        pythonUdtfInputOffsets,
+                        joinType);
         return ExecNodeUtil.createOneInputTransformation(
                 inputTransform,
                 createTransformationMeta(PYTHON_CORRELATE_TRANSFORMATION, pythonNodeConfig),
@@ -165,14 +173,15 @@ public abstract class CommonExecPythonCorrelate extends ExecNodeBase<RowData>
     }
 
     @SuppressWarnings("unchecked")
-    private OneInputStreamOperator<RowData, RowData> getPythonTableFunctionOperator(
+    public static OneInputStreamOperator<RowData, RowData> getPythonTableFunctionOperator(
             ExecNodeConfig config,
             ClassLoader classLoader,
             Configuration pythonConfig,
             InternalTypeInfo<RowData> inputRowType,
             InternalTypeInfo<RowData> outputRowType,
             PythonFunctionInfo pythonFunctionInfo,
-            int[] udtfInputOffsets) {
+            int[] udtfInputOffsets,
+            FlinkJoinType joinType) {
         boolean isInProcessMode =
                 CommonPythonUtil.isPythonWorkerInProcessMode(pythonConfig, classLoader);
 
@@ -237,6 +246,88 @@ public abstract class CommonExecPythonCorrelate extends ExecNodeBase<RowData>
             }
         } catch (Exception e) {
             throw new TableException("Python Table Function Operator constructed failed.", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public static OneInputStreamOperator<RowData, RowData> getPythonMLPredictOperator(
+            ExecNodeConfig config,
+            ClassLoader classLoader,
+            Configuration pythonConfig,
+            InternalTypeInfo<RowData> inputRowType,
+            InternalTypeInfo<RowData> outputRowType,
+            PythonFunctionInfo pythonFunctionInfo,
+            int[] udtfInputOffsets,
+            FlinkJoinType joinType,
+            Map<String, String> modelConfig) {
+        boolean isInProcessMode =
+                CommonPythonUtil.isPythonWorkerInProcessMode(pythonConfig, classLoader);
+
+        final RowType inputType = inputRowType.toRowType();
+        final RowType outputType = outputRowType.toRowType();
+        final RowType udfInputType = (RowType) Projection.of(udtfInputOffsets).project(inputType);
+        final RowType udfOutputType =
+                (RowType)
+                        Projection.range(inputType.getFieldCount(), outputType.getFieldCount())
+                                .project(outputType);
+
+        try {
+            if (isInProcessMode) {
+                Class clazz =
+                        CommonPythonUtil.loadClass(
+                                PYTHON_TABLE_FUNCTION_OPERATOR_NAME, classLoader);
+                Constructor ctor =
+                        clazz.getConstructor(
+                                Configuration.class,
+                                PythonFunctionInfo.class,
+                                RowType.class,
+                                RowType.class,
+                                RowType.class,
+                                FlinkJoinType.class,
+                                GeneratedProjection.class,
+                                Map.class);
+                return (OneInputStreamOperator<RowData, RowData>)
+                        ctor.newInstance(
+                                pythonConfig,
+                                pythonFunctionInfo,
+                                inputType,
+                                udfInputType,
+                                udfOutputType,
+                                joinType,
+                                ProjectionCodeGenerator.generateProjection(
+                                        new CodeGeneratorContext(config, classLoader),
+                                        "UdtfInputProjection",
+                                        inputType,
+                                        udfInputType,
+                                        udtfInputOffsets),
+                                modelConfig);
+            } else {
+                Class clazz =
+                        CommonPythonUtil.loadClass(
+                                EMBEDDED_PYTHON_PREDICT_FUNCTION_OPERATOR_NAME, classLoader);
+                Constructor ctor =
+                        clazz.getConstructor(
+                                Configuration.class,
+                                PythonFunctionInfo.class,
+                                RowType.class,
+                                RowType.class,
+                                RowType.class,
+                                FlinkJoinType.class,
+                                int[].class,
+                                Map.class);
+                return (OneInputStreamOperator<RowData, RowData>)
+                        ctor.newInstance(
+                                pythonConfig,
+                                pythonFunctionInfo,
+                                inputType,
+                                udfInputType,
+                                udfOutputType,
+                                joinType,
+                                udtfInputOffsets,
+                                modelConfig);
+            }
+        } catch (Exception e) {
+            throw new TableException("Python ML Predict Operator constructed failed.", e);
         }
     }
 }

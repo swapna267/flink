@@ -35,16 +35,27 @@ public class DefaultCatalogModel implements CatalogModel {
     private final Schema outputSchema;
     private final Map<String, String> modelOptions;
     private final @Nullable String comment;
+    private final @Nullable String language;
+
+    protected DefaultCatalogModel(
+            Schema inputSchema,
+            Schema outputSchema,
+            Map<String, String> modelOptions,
+            @Nullable String comment,
+            @Nullable String language) {
+        this.inputSchema = checkNotNull(inputSchema, "Input schema must not be null.");
+        this.outputSchema = checkNotNull(outputSchema, "Output schema must not be null.");
+        this.modelOptions = modelOptions;
+        this.comment = comment;
+        this.language = language;
+    }
 
     protected DefaultCatalogModel(
             Schema inputSchema,
             Schema outputSchema,
             Map<String, String> modelOptions,
             @Nullable String comment) {
-        this.inputSchema = checkNotNull(inputSchema, "Input schema must not be null.");
-        this.outputSchema = checkNotNull(outputSchema, "Output schema must not be null.");
-        this.modelOptions = modelOptions;
-        this.comment = comment;
+        this(inputSchema, outputSchema, modelOptions, comment, null);
     }
 
     @Override
@@ -68,15 +79,24 @@ public class DefaultCatalogModel implements CatalogModel {
     }
 
     @Override
+    public @Nullable String getLanguage() {
+        return language;
+    }
+
+    @Override
     public CatalogModel copy() {
         return new DefaultCatalogModel(
-                this.inputSchema, this.outputSchema, this.modelOptions, this.comment);
+                this.inputSchema,
+                this.outputSchema,
+                this.modelOptions,
+                this.comment,
+                this.language);
     }
 
     @Override
     public CatalogModel copy(Map<String, String> newModelOptions) {
         return new DefaultCatalogModel(
-                this.inputSchema, this.outputSchema, newModelOptions, this.comment);
+                this.inputSchema, this.outputSchema, newModelOptions, this.comment, this.language);
     }
 
     @Override
@@ -91,12 +111,13 @@ public class DefaultCatalogModel implements CatalogModel {
         return Objects.equals(inputSchema, that.inputSchema)
                 && Objects.equals(outputSchema, that.outputSchema)
                 && modelOptions.equals(that.modelOptions)
-                && Objects.equals(comment, that.comment);
+                && Objects.equals(comment, that.comment)
+                && Objects.equals(language, that.language);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(inputSchema, outputSchema, modelOptions, comment);
+        return Objects.hash(inputSchema, outputSchema, modelOptions, comment, language);
     }
 
     @Override
@@ -110,6 +131,8 @@ public class DefaultCatalogModel implements CatalogModel {
                 + modelOptions
                 + ", comment="
                 + comment
+                + ", language="
+                + language
                 + "}";
     }
 }

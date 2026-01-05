@@ -138,10 +138,20 @@ public enum ProtoUtils {
             PythonFunctionInfo[] userDefinedFunctions,
             boolean isMetricEnabled,
             boolean isProfileEnabled) {
+        return createUserDefinedFunctionsProto(
+                runtimeContext, userDefinedFunctions, isMetricEnabled, isProfileEnabled, null);
+    }
+
+    public static FlinkFnApi.UserDefinedFunctions createUserDefinedFunctionsProto(
+            RuntimeContext runtimeContext,
+            PythonFunctionInfo[] userDefinedFunctions,
+            boolean isMetricEnabled,
+            boolean isProfileEnabled,
+            Map<String, String> modelConfig) {
         FlinkFnApi.UserDefinedFunctions.Builder builder =
                 FlinkFnApi.UserDefinedFunctions.newBuilder();
         for (PythonFunctionInfo userDefinedFunction : userDefinedFunctions) {
-            builder.addUdfs(createUserDefinedFunctionProto(userDefinedFunction));
+            builder.addUdfs(createUserDefinedFunctionProto(userDefinedFunction, modelConfig));
         }
         builder.setMetricEnabled(isMetricEnabled);
         builder.setProfileEnabled(isProfileEnabled);
@@ -159,6 +169,11 @@ public enum ProtoUtils {
 
     public static FlinkFnApi.UserDefinedFunction createUserDefinedFunctionProto(
             PythonFunctionInfo pythonFunctionInfo) {
+        return createUserDefinedFunctionProto(pythonFunctionInfo, null);
+    }
+
+    public static FlinkFnApi.UserDefinedFunction createUserDefinedFunctionProto(
+            PythonFunctionInfo pythonFunctionInfo, Map<String, String> modelConfig) {
         FlinkFnApi.UserDefinedFunction.Builder builder =
                 FlinkFnApi.UserDefinedFunction.newBuilder();
         builder.setPayload(
@@ -167,7 +182,8 @@ public enum ProtoUtils {
         for (Object input : pythonFunctionInfo.getInputs()) {
             FlinkFnApi.Input.Builder inputProto = FlinkFnApi.Input.newBuilder();
             if (input instanceof PythonFunctionInfo) {
-                inputProto.setUdf(createUserDefinedFunctionProto((PythonFunctionInfo) input));
+                inputProto.setUdf(
+                        createUserDefinedFunctionProto((PythonFunctionInfo) input, modelConfig));
             } else if (input instanceof Integer) {
                 inputProto.setInputOffset((Integer) input);
             } else {
@@ -179,6 +195,24 @@ public enum ProtoUtils {
         builder.setIsPandasUdf(
                 pythonFunctionInfo.getPythonFunction().getPythonFunctionKind()
                         == PythonFunctionKind.PANDAS);
+
+        if (modelConfig != null && !modelConfig.isEmpty()) {
+            FlinkFnApi.ModelContext.Builder modelContextBuilder =
+                    FlinkFnApi.ModelContext.newBuilder();
+            for (Map.Entry<String, String> entry : modelConfig.entrySet()) {
+                if (entry.getValue() != null) {
+                    modelContextBuilder.addModelParameters(
+                            FlinkFnApi.ModelParameter.newBuilder()
+                                    .setKey(entry.getKey())
+                                    .setValue(entry.getValue())
+                                    .build());
+                } else {
+                    System.out.println("Value is NULL for key:" + entry.getKey());
+                }
+            }
+            builder.setModelContext(modelContextBuilder.build());
+        }
+
         return builder.build();
     }
 

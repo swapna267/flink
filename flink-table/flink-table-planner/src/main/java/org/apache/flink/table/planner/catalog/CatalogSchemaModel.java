@@ -112,6 +112,10 @@ public class CatalogSchemaModel {
 
     private ModelProvider createModelProvider(
             FlinkContext context, ContextResolvedModel catalogModel) {
+        String language = catalogModel.getResolvedModel().getLanguage();
+        if ("PYTHON".equals(language)) {
+            return null;
+        }
 
         final Optional<ModelProviderFactory> factoryFromCatalog =
                 catalogModel

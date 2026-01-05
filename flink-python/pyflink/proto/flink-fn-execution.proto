@@ -62,6 +62,18 @@ message UserDefinedFunction {
 
   // Whether it's pandas UDF
   bool is_pandas_udf = 5;
+
+  // Model context
+  ModelContext model_context = 6;
+}
+
+message ModelContext {
+  repeated ModelParameter model_parameters = 1;
+}
+
+message ModelParameter {
+  string key = 1;
+  string value = 2;
 }
 
 // A list of user-defined functions to be executed in a batch.
@@ -368,6 +380,7 @@ message UserDefinedDataStreamFunction {
     KEYED_CO_BROADCAST_PROCESS = 6;
     REVISE_OUTPUT = 100;
   }
+
 
   message RuntimeContext {
     string task_name = 1;
