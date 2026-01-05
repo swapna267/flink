@@ -50,6 +50,7 @@ public class SqlCreateModel extends SqlCreateObject implements ExtendedSqlNode {
 
     private final SqlNodeList inputColumnList;
     private final SqlNodeList outputColumnList;
+    private final String modelLanguage;
 
     public SqlCreateModel(
             SqlParserPos pos,
@@ -58,11 +59,13 @@ public class SqlCreateModel extends SqlCreateObject implements ExtendedSqlNode {
             SqlNodeList inputColumnList,
             SqlNodeList outputColumnList,
             SqlNodeList propertyList,
+            String modelLanguage,
             boolean isTemporary,
             boolean ifNotExists) {
         super(OPERATOR, pos, modelName, isTemporary, false, ifNotExists, propertyList, comment);
         this.inputColumnList = inputColumnList;
         this.outputColumnList = outputColumnList;
+        this.modelLanguage = modelLanguage;
         requireNonNull(propertyList, "propertyList should not be null");
     }
 
@@ -78,6 +81,10 @@ public class SqlCreateModel extends SqlCreateObject implements ExtendedSqlNode {
 
     public SqlNodeList getOutputColumnList() {
         return outputColumnList;
+    }
+
+    public String getModelLanguage() {
+        return modelLanguage;
     }
 
     @Override

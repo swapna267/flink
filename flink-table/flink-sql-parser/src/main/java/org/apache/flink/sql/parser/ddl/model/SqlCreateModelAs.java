@@ -62,6 +62,7 @@ public class SqlCreateModelAs extends SqlCreateModel {
             SqlNodeList inputColumnList,
             SqlNodeList outputColumnList,
             SqlNodeList propertyList,
+            String modelLanguage,
             SqlNode asQuery,
             boolean isTemporary,
             boolean ifNotExists) {
@@ -72,6 +73,7 @@ public class SqlCreateModelAs extends SqlCreateModel {
                 inputColumnList,
                 outputColumnList,
                 propertyList,
+                modelLanguage,
                 isTemporary,
                 ifNotExists);
         this.asQuery =

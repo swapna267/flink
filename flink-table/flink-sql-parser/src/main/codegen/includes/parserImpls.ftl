@@ -144,7 +144,7 @@ SqlCreate SqlCreateCatalog(Span s, boolean replace) :
     SqlParserPos startPos;
     SqlIdentifier catalogName;
     SqlNodeList propertyList = SqlNodeList.EMPTY;
-    SqlNode comment = null;
+    SqlCharStringLiteral comment = null;
     boolean ifNotExists = false;
 }
 {
@@ -154,8 +154,8 @@ SqlCreate SqlCreateCatalog(Span s, boolean replace) :
 
     catalogName = SimpleIdentifier()
     [
-        <COMMENT>
-        comment = StringLiteral()
+        <COMMENT> <QUOTED_STRING>
+        { comment = Comment(); }
     ]
     [
         <WITH>
@@ -195,7 +195,7 @@ SqlAlterCatalog SqlAlterCatalog() :
     SqlParserPos startPos;
     SqlIdentifier catalogName;
     SqlNodeList propertyList = SqlNodeList.EMPTY;
-    SqlNode comment = null;
+    SqlCharStringLiteral comment = null;
 }
 {
     <ALTER> <CATALOG> { startPos = getPos(); }
@@ -217,9 +217,9 @@ SqlAlterCatalog SqlAlterCatalog() :
                            propertyList);
         }
     |
-        <COMMENT>
-        comment = StringLiteral()
+        <COMMENT> <QUOTED_STRING>
         {
+            comment = Comment();
             return new SqlAlterCatalogComment(startPos.plus(getPos()),
                                        catalogName,
                                        comment);
@@ -314,8 +314,7 @@ SqlCreate SqlCreateDatabase(Span s, boolean replace) :
     databaseName = CompoundIdentifier()
     [ <COMMENT> <QUOTED_STRING>
         {
-            String p = SqlParserUtil.parseString(token.image);
-            comment = SqlLiteral.createCharString(p, getPos());
+            comment = Comment();
         }
     ]
     [
@@ -396,6 +395,7 @@ SqlCreate SqlCreateFunction(Span s, boolean replace, boolean isTemporary) :
     boolean ifNotExists = false;
     boolean isSystemFunction = false;
     SqlNodeList resourceInfos = SqlNodeList.EMPTY;
+    SqlNodeList propertyList = SqlNodeList.EMPTY;
     SqlParserPos functionLanguagePos = null;
 }
 {
@@ -466,6 +466,10 @@ SqlCreate SqlCreateFunction(Span s, boolean replace, boolean isTemporary) :
         )*
         {  resourceInfos = new SqlNodeList(resourceList, s.pos()); }
     ]
+    [
+        <WITH>
+        propertyList = Properties()
+    ]
     {
         return new SqlCreateFunction(
                     s.pos(),
@@ -475,7 +479,8 @@ SqlCreate SqlCreateFunction(Span s, boolean replace, boolean isTemporary) :
                     ifNotExists,
                     isTemporary,
                     isSystemFunction,
-                    resourceInfos);
+                    resourceInfos,
+                    propertyList);
     }
 }
 
@@ -655,45 +660,8 @@ SqlShowProcedures SqlShowProcedures() :
 }
 
 /**
- * SHOW VIEWS FROM [catalog.] database sql call.
- */
-SqlShowViews SqlShowViews() :
-{
-    SqlIdentifier databaseName = null;
-    SqlCharStringLiteral likeLiteral = null;
-    String prep = null;
-    boolean notLike = false;
-    SqlParserPos pos;
-}
-{
-    <SHOW> <VIEWS>
-    { pos = getPos(); }
-    [
-        ( <FROM> { prep = "FROM"; } | <IN> { prep = "IN"; } )
-        { pos = getPos(); }
-        databaseName = CompoundIdentifier()
-    ]
-    [
-        [
-            <NOT>
-            {
-                notLike = true;
-            }
-        ]
-        <LIKE> <QUOTED_STRING>
-        {
-            String likeCondition = SqlParserUtil.parseString(token.image);
-            likeLiteral = SqlLiteral.createCharString(likeCondition, getPos());
-        }
-    ]
-    {
-        return new SqlShowViews(pos, prep, databaseName, notLike, likeLiteral);
-    }
-}
-
-/**
 * Parses a show tables statement.
-* SHOW TABLES [ ( FROM | IN ) [catalog_name.]database_name ] [ [NOT] LIKE pattern ];
+* SHOW ( VIEWS | [ MATERIALIZED ]TABLES ) [ ( FROM | IN ) [catalog_name.]database_name ] [ [NOT] LIKE pattern ];
 */
 SqlShowTables SqlShowTables() :
 {
@@ -702,9 +670,17 @@ SqlShowTables SqlShowTables() :
     String prep = null;
     boolean notLike = false;
     SqlParserPos pos;
+    SqlTableKind kind;
 }
 {
-    <SHOW> <TABLES>
+    <SHOW>
+    (
+           <TABLES> { kind = SqlTableKind.TABLE; }
+       |
+           <VIEWS> { kind = SqlTableKind.VIEW; }
+       |
+           <MATERIALIZED> <TABLES> { kind = SqlTableKind.MATERIALIZED_TABLE; }
+    )
     { pos = getPos(); }
     [
         ( <FROM> { prep = "FROM"; } | <IN> { prep = "IN"; } )
@@ -725,7 +701,7 @@ SqlShowTables SqlShowTables() :
         }
     ]
     {
-        return new SqlShowTables(pos, prep, databaseName, notLike, likeLiteral);
+        return new SqlShowTables(pos, kind, prep, databaseName, notLike, likeLiteral);
     }
 }
 
@@ -800,11 +776,25 @@ SqlShowCreate SqlShowCreate() :
         {
             return new SqlShowCreateModel(pos, sqlIdentifier);
         }
+    |
+        <CONNECTION>
+        { pos = getPos(); }
+        sqlIdentifier = CompoundIdentifier()
+        {
+            return new SqlShowCreateConnection(pos, sqlIdentifier);
+        }
+    |
+        <MATERIALIZED> <TABLE>
+        { pos = getPos(); }
+        sqlIdentifier = CompoundIdentifier()
+        {
+            return new SqlShowCreateMaterializedTable(pos, sqlIdentifier);
+        }
     )
 }
 
 /**
- * DESCRIBE | DESC FUNCTION [ EXTENDED] [[catalogName.] dataBasesName].functionName sql call.
+ * (DESCRIBE | DESC) FUNCTION [ EXTENDED] [[catalogName.] dataBasesName].functionName sql call.
  * Here we add Rich in className to match the naming of SqlRichDescribeTable.
  */
 SqlRichDescribeFunction SqlRichDescribeFunction() :
@@ -823,7 +813,7 @@ SqlRichDescribeFunction SqlRichDescribeFunction() :
 }
 
 /**
- * DESCRIBE | DESC MODEL [ EXTENDED] [[catalogName.] dataBasesName].modelName sql call.
+ * (DESCRIBE | DESC) MODEL [ EXTENDED] [[catalogName.] dataBasesName].modelName sql call.
  * Here we add Rich in className to match the naming of SqlRichDescribeTable.
  */
 SqlRichDescribeModel SqlRichDescribeModel() :
@@ -842,7 +832,26 @@ SqlRichDescribeModel SqlRichDescribeModel() :
 }
 
 /**
- * DESCRIBE | DESC [ EXTENDED] [[catalogName.] dataBasesName].tableName sql call.
+ * (DESCRIBE | DESC) CONNECTION [ EXTENDED] [[catalogName.] dataBasesName].connectionName sql call.
+ * Here we add Rich in className to match the naming of SqlRichDescribeTable.
+ */
+SqlRichDescribeConnection SqlRichDescribeConnection() :
+{
+    SqlIdentifier connectionName;
+    SqlParserPos pos;
+    boolean isExtended = false;
+}
+{
+    ( <DESCRIBE> | <DESC> ) <CONNECTION> { pos = getPos();}
+    [ <EXTENDED> { isExtended = true;} ]
+    connectionName = CompoundIdentifier()
+    {
+        return new SqlRichDescribeConnection(pos, connectionName, isExtended);
+    }
+}
+
+/**
+ * (DESCRIBE | DESC) [ EXTENDED] [[catalogName.] dataBasesName].tableName sql call.
  * Here we add Rich in className to distinguish from calcite's original SqlDescribeTable.
  */
 SqlRichDescribeTable SqlRichDescribeTable() :
@@ -874,7 +883,7 @@ SqlAlterTable SqlAlterTable() :
     SqlTableConstraint constraint;
     SqlIdentifier originColumnIdentifier;
     SqlIdentifier newColumnIdentifier;
-    AlterTableContext ctx = new AlterTableContext();
+    AlterTableSchemaContext ctx = new AlterTableSchemaContext();
     AlterTableAddPartitionContext addPartitionCtx = new AlterTableAddPartitionContext();
     AlterTableDropPartitionsContext dropPartitionsCtx = new AlterTableDropPartitionsContext();
 }
@@ -940,6 +949,11 @@ SqlAlterTable SqlAlterTable() :
             }
         |
         (
+            <DISTRIBUTION>
+            {
+                return new SqlAlterTableAddDistribution(getPos(), tableIdentifier, SqlDistribution(getPos()));
+            }
+        |
             AlterTableAddOrModify(ctx)
         |
             <LPAREN>
@@ -956,13 +970,17 @@ SqlAlterTable SqlAlterTable() :
                         new SqlNodeList(ctx.columnPositions, startPos.plus(getPos())),
                         ctx.constraints,
                         ctx.watermark,
-                        ctx.distribution,
                         ifExists);
         }
         )
     |
         <MODIFY>
         (
+            <DISTRIBUTION>
+            {
+                return new SqlAlterTableModifyDistribution(getPos(), tableIdentifier, SqlDistribution(getPos()));
+            }
+        |
             AlterTableAddOrModify(ctx)
         |
             <LPAREN>
@@ -979,10 +997,8 @@ SqlAlterTable SqlAlterTable() :
                         new SqlNodeList(ctx.columnPositions, startPos.plus(getPos())),
                         ctx.constraints,
                         ctx.watermark,
-                        ctx.distribution,
                         ifExists);
         }
-
     |
      <DROP>
         (
@@ -1074,7 +1090,7 @@ SqlNodeList PropertyKeys():
     {  return new SqlNodeList(proKeyList, span.end(this)); }
 }
 
-void TableColumn(TableCreationContext context) :
+void TableColumn(TableSchemaContext context) :
 {
     SqlTableConstraint constraint;
 }
@@ -1093,7 +1109,7 @@ void TableColumn(TableCreationContext context) :
     )
 }
 
-void Watermark(TableCreationContext context) :
+void Watermark(TableSchemaContext context) :
 {
     SqlIdentifier eventTimeColumnName;
     SqlParserPos pos;
@@ -1114,7 +1130,7 @@ void Watermark(TableCreationContext context) :
 }
 
 /** Parses {@code column_name column_data_type [...]}. */
-SqlTableColumn TypedColumn(TableCreationContext context) :
+SqlTableColumn TypedColumn(TableSchemaContext context) :
 {
     SqlTableColumn tableColumn;
     SqlIdentifier name;
@@ -1135,20 +1151,22 @@ SqlTableColumn TypedColumn(TableCreationContext context) :
 }
 
 /** Parses {@code column_name AS expr [COMMENT 'comment']}. */
-SqlTableColumn ComputedColumn(TableCreationContext context) :
+SqlTableColumn ComputedColumn(TableSchemaContext context) :
 {
     SqlIdentifier name;
     SqlParserPos pos;
     SqlNode expr;
-    SqlNode comment = null;
+    SqlCharStringLiteral comment = null;
 }
 {
     name = SimpleIdentifier() {pos = getPos();}
     <AS>
     expr = Expression(ExprContext.ACCEPT_NON_QUERY)
     [
-        <COMMENT>
-        comment = StringLiteral()
+        <COMMENT> <QUOTED_STRING>
+        {
+            comment = Comment();
+        }
     ]
     {
         SqlTableColumn computedColumn = new SqlTableColumn.SqlComputedColumn(
@@ -1162,11 +1180,11 @@ SqlTableColumn ComputedColumn(TableCreationContext context) :
 }
 
 /** Parses {@code column_name column_data_type METADATA [FROM 'alias_name'] [VIRTUAL] [COMMENT 'comment']}. */
-SqlTableColumn MetadataColumn(TableCreationContext context, SqlIdentifier name, SqlDataTypeSpec type) :
+SqlTableColumn MetadataColumn(TableSchemaContext context, SqlIdentifier name, SqlDataTypeSpec type) :
 {
     SqlNode metadataAlias = null;
     boolean isVirtual = false;
-    SqlNode comment = null;
+    SqlCharStringLiteral comment = null;
 }
 {
     <METADATA>
@@ -1180,8 +1198,10 @@ SqlTableColumn MetadataColumn(TableCreationContext context, SqlIdentifier name, 
         }
     ]
     [
-        <COMMENT>
-        comment = StringLiteral()
+        <COMMENT> <QUOTED_STRING>
+        {
+            comment = Comment();
+        }
     ]
     {
         SqlTableColumn metadataColumn = new SqlTableColumn.SqlMetadataColumn(
@@ -1197,18 +1217,20 @@ SqlTableColumn MetadataColumn(TableCreationContext context, SqlIdentifier name, 
 }
 
 /** Parses {@code column_name column_data_type [constraint] [COMMENT 'comment']}. */
-SqlTableColumn RegularColumn(TableCreationContext context, SqlIdentifier name, SqlDataTypeSpec type) :
+SqlTableColumn RegularColumn(TableSchemaContext context, SqlIdentifier name, SqlDataTypeSpec type) :
 {
     SqlTableConstraint constraint = null;
-    SqlNode comment = null;
+    SqlCharStringLiteral comment = null;
 }
 {
     [
         constraint = ColumnConstraint(name)
     ]
     [
-        <COMMENT>
-        comment = StringLiteral()
+        <COMMENT> <QUOTED_STRING>
+        {
+            comment = Comment();
+        }
     ]
     {
         SqlTableColumn regularColumn = new SqlTableColumn.SqlRegularColumn(
@@ -1251,8 +1273,8 @@ void  AlterTableAddPartition(AlterTableAddPartitionContext context) :
     }
 }
 
-/** Parses {@code ALTER TABLE table_name ADD/MODIFY [...]}. */
-void AlterTableAddOrModify(AlterTableContext context) :
+/** Parses {@code ALTER [MATERIALIZED ]TABLE table_name ADD/MODIFY [...]}. */
+void AlterTableAddOrModify(AlterTableSchemaContext context) :
 {
     SqlTableConstraint constraint;
 }
@@ -1265,14 +1287,11 @@ void AlterTableAddOrModify(AlterTableContext context) :
         }
     |
         Watermark(context)
-    |
-        <DISTRIBUTION>
-        context.distribution = SqlDistribution(getPos())
     )
 }
 
 /** Parses {@code ADD/MODIFY column_name column_data_type [...]}. */
-void AddOrModifyColumn(AlterTableContext context) :
+void AddOrModifyColumn(AlterTableSchemaContext context) :
 {
     SqlTableColumn column;
     SqlIdentifier referencedColumn = null;
@@ -1577,7 +1596,7 @@ SqlCreate SqlCreateTable(Span s, boolean replace, boolean isTemporary) :
 
     tableName = CompoundIdentifier()
     [
-        <LPAREN> { pos = getPos(); TableCreationContext ctx = new TableCreationContext();}
+        <LPAREN> { pos = getPos(); TableSchemaContext ctx = new TableSchemaContext();}
         TableColumnsOrIdentifiers(pos, ctx)
         {
             pos = pos.plus(getPos());
@@ -1589,8 +1608,7 @@ SqlCreate SqlCreateTable(Span s, boolean replace, boolean isTemporary) :
         <RPAREN>
     ]
     [ <COMMENT> <QUOTED_STRING> {
-        String p = SqlParserUtil.parseString(token.image);
-        comment = SqlLiteral.createCharString(p, getPos());
+          comment = Comment();
     }]
     [
         <DISTRIBUTED>
@@ -1763,9 +1781,9 @@ SqlDrop SqlDropTable(Span s, boolean replace, boolean isTemporary) :
     }
 }
 
-void TableColumnsOrIdentifiers(SqlParserPos pos, TableCreationContext ctx) :
+void TableColumnsOrIdentifiers(SqlParserPos pos, TableSchemaContext ctx) :
 {
-    final TableCreationContext tempCtx = new TableCreationContext();
+    final TableSchemaContext tempCtx = new TableSchemaContext();
     final List<SqlNode> identifiers = new ArrayList<SqlNode>();
 }
 {
@@ -1822,7 +1840,7 @@ SqlNode SqlReplaceTable() :
 
     tableName = CompoundIdentifier()
     [
-        <LPAREN> { pos = getPos(); TableCreationContext ctx = new TableCreationContext();}
+        <LPAREN> { pos = getPos(); TableSchemaContext ctx = new TableSchemaContext();}
         TableColumnsOrIdentifiers(pos, ctx)
         {
             pos = getPos();
@@ -1832,10 +1850,9 @@ SqlNode SqlReplaceTable() :
         }
         <RPAREN>
     ]
-    [ <COMMENT> <QUOTED_STRING> {
-        String p = SqlParserUtil.parseString(token.image);
-        comment = SqlLiteral.createCharString(p, getPos());
-    }]
+    [ <COMMENT> <QUOTED_STRING>
+        { comment = Comment(); }
+    ]
     [
         <DISTRIBUTED>
         distribution = SqlDistribution(getPos())
@@ -1868,21 +1885,32 @@ SqlNode SqlReplaceTable() :
 }
 
 /**
-  * Parses a CREATE MATERIALIZED TABLE statement.
+  * Parses a CREATE [OR ALTER] MATERIALIZED TABLE statement.
 */
-SqlCreate SqlCreateMaterializedTable(Span s, boolean replace, boolean isTemporary) :
+SqlCreate SqlCreateOrAlterMaterializedTable(Span s, boolean replace, boolean isTemporary) :
 {
     final SqlParserPos startPos = s.pos();
     SqlIdentifier tableName;
     SqlCharStringLiteral comment = null;
-    SqlTableConstraint constraint = null;
+    List<SqlTableConstraint> constraints = new ArrayList<SqlTableConstraint>();
+    SqlWatermark watermark = null;
+    SqlNodeList columnList = SqlNodeList.EMPTY;
+    SqlDistribution distribution = null;
     SqlNodeList partitionColumns = SqlNodeList.EMPTY;
     SqlNodeList propertyList = SqlNodeList.EMPTY;
     SqlNode freshness = null;
-    SqlLiteral refreshMode = null;
+    SqlRefreshMode refreshMode = null;
     SqlNode asQuery = null;
+    SqlParserPos pos = startPos;
+    boolean isColumnsIdentifiersOnly = false;
+    boolean isOrAlter = false;
 }
 {
+    [
+      <OR> <ALTER> {
+        isOrAlter = true;
+      }
+    ]
     <MATERIALIZED>
     {
         if (isTemporary) {
@@ -1899,16 +1927,25 @@ SqlCreate SqlCreateMaterializedTable(Span s, boolean replace, boolean isTemporar
     <TABLE>
     tableName = CompoundIdentifier()
     [
-        <LPAREN>
-        constraint = TableConstraint()
+        <LPAREN> { pos = getPos(); TableSchemaContext ctx = new TableSchemaContext();}
+            TableColumnsOrIdentifiers(pos, ctx) {
+                pos = pos.plus(getPos());
+                isColumnsIdentifiersOnly = ctx.isColumnsIdentifiersOnly();
+                columnList = new SqlNodeList(ctx.columnList, pos);
+                constraints = ctx.constraints;
+                watermark = ctx.watermark;
+            }
         <RPAREN>
     ]
     [
         <COMMENT> <QUOTED_STRING>
         {
-            String p = SqlParserUtil.parseString(token.image);
-            comment = SqlLiteral.createCharString(p, getPos());
+            comment = Comment();
         }
+    ]
+    [
+        <DISTRIBUTED>
+        distribution = SqlDistribution(getPos())
     ]
     [
         <PARTITIONED> <BY>
@@ -1918,43 +1955,49 @@ SqlCreate SqlCreateMaterializedTable(Span s, boolean replace, boolean isTemporar
         <WITH>
         propertyList = Properties()
     ]
-    <FRESHNESS> <EQ>
-    freshness = Expression(ExprContext.ACCEPT_NON_QUERY)
-    {
-        if (!(freshness instanceof SqlIntervalLiteral))
+    [
+        <FRESHNESS> <EQ>
+        freshness = Expression(ExprContext.ACCEPT_NON_QUERY)
         {
-            throw SqlUtil.newContextException(
-            getPos(),
-            ParserResource.RESOURCE.unsupportedFreshnessType());
+            if (!(freshness instanceof SqlIntervalLiteral))
+            {
+                throw SqlUtil.newContextException(
+                getPos(),
+                ParserResource.RESOURCE.unsupportedFreshnessType());
+            }
         }
-    }
+    ]
     [
         <REFRESH_MODE> <EQ>
         (
             <FULL>
             {
-                refreshMode = SqlRefreshMode.FULL.symbol(getPos());
+                refreshMode = SqlRefreshMode.FULL;
             }
             |
             <CONTINUOUS>
             {
-                refreshMode = SqlRefreshMode.CONTINUOUS.symbol(getPos());
+                refreshMode = SqlRefreshMode.CONTINUOUS;
             }
         )
     ]
     <AS>
     asQuery = OrderedQueryOrExpr(ExprContext.ACCEPT_QUERY)
     {
-        return new SqlCreateMaterializedTable(
+        return new SqlCreateOrAlterMaterializedTable(
             startPos.plus(getPos()),
             tableName,
+            columnList,
+            constraints,
+            watermark,
             comment,
-            constraint,
+            distribution,
             partitionColumns,
             propertyList,
             (SqlIntervalLiteral) freshness,
             refreshMode,
-            asQuery);
+            asQuery,
+            isOrAlter);
     }
 }
 
@@ -2306,8 +2349,7 @@ SqlCreate SqlCreateView(Span s, boolean replace, boolean isTemporary) : {
         fieldList = ParenthesizedSimpleIdentifierList()
     ]
     [ <COMMENT> <QUOTED_STRING> {
-            String p = SqlParserUtil.parseString(token.image);
-            comment = SqlLiteral.createCharString(p, getPos());
+            comment = Comment();
         }
     ]
     <AS>
@@ -2723,7 +2765,7 @@ SqlCreate SqlCreateExtended(Span s, boolean replace) :
     (
         create = SqlCreateCatalog(s, replace)
         |
-        create = SqlCreateMaterializedTable(s, replace, isTemporary)
+        create = SqlCreateOrAlterMaterializedTable(s, replace, isTemporary)
         |
         create = SqlCreateTable(s, replace, isTemporary)
         |
@@ -2731,9 +2773,13 @@ SqlCreate SqlCreateExtended(Span s, boolean replace) :
         |
         create = SqlCreateDatabase(s, replace)
         |
+        create = SqlCreateModel(s, isTemporary)
+        |
+        // Lookahead to distinguish <SYSTEM> FUNCTION and <SYSTEM> <CONNECTION>
+        LOOKAHEAD(2)
         create = SqlCreateFunction(s, replace, isTemporary)
         |
-        create = SqlCreateModel(s, isTemporary)
+        create = SqlCreateConnection(s, isTemporary)
     )
     {
         return create;
@@ -2760,9 +2806,13 @@ SqlDrop SqlDropExtended(Span s, boolean replace) :
         |
         drop = SqlDropDatabase(s, replace)
         |
+        drop = SqlDropModel(s, isTemporary)
+        |
+        // Lookahead to distinguish <SYSTEM> FUNCTION and <SYSTEM> <CONNECTION>
+        LOOKAHEAD(2)
         drop = SqlDropFunction(s, replace, isTemporary)
         |
-        drop = SqlDropModel(s, isTemporary)
+        drop = SqlDropConnection(s, isTemporary)
     )
     {
         return drop;
@@ -2950,9 +3000,12 @@ SqlNode SqlRichExplain() :
     <EXPLAIN>
     )
     (
+        LOOKAHEAD(2)
         stmt = SqlReplaceTable()
         |
         stmt = SqlStatementSet()
+        |
+        stmt = SqlExecute()
         |
         stmt = OrderedQueryOrExpr(ExprContext.ACCEPT_QUERY)
         |
@@ -3189,34 +3242,6 @@ SqlNode SqlReset() :
     }
 }
 
-
-/** Parses a TRY_CAST invocation. */
-SqlNode TryCastFunctionCall() :
-{
-    final Span s;
-    final SqlOperator operator;
-    List<SqlNode> args = null;
-    SqlNode e = null;
-}
-{
-    <TRY_CAST> {
-        s = span();
-        operator = new SqlUnresolvedTryCastFunction(s.pos());
-    }
-    <LPAREN>
-        e = Expression(ExprContext.ACCEPT_SUB_QUERY) { args = startList(e); }
-    <AS>
-    (
-        e = DataType() { args.add(e); }
-    |
-        <INTERVAL> e = IntervalQualifier() { args.add(e); }
-    )
-    <RPAREN>
-    {
-        return operator.createCall(s.end(this), args);
-    }
-}
-
 /**
  * Parses an explicit Model m reference.
  */
@@ -3418,7 +3443,7 @@ SqlTruncateTable SqlTruncateTable() :
 }
 
 /**
-* SHOW MODELS [FROM [catalog.] database] [[NOT] LIKE pattern]; sql call.
+* SHOW MODELS [FROM [catalog.] database] [[NOT] LIKE pattern];
 */
 SqlShowModels SqlShowModels() :
 {
@@ -3451,6 +3476,43 @@ SqlShowModels SqlShowModels() :
     ]
     {
         return new SqlShowModels(pos, prep, databaseName, notLike, likeLiteral);
+    }
+}
+
+/**
+* SHOW CONNECTIONS [LIKE 'pattern'] [FROM catalog_name.db_name];
+*/
+SqlShowConnections SqlShowConnections() :
+{
+    SqlIdentifier databaseName = null;
+    SqlCharStringLiteral likeLiteral = null;
+    String prep = null;
+    boolean notLike = false;
+    SqlParserPos pos;
+}
+{
+    <SHOW> <CONNECTIONS>
+    { pos = getPos(); }
+    [
+        ( <FROM> { prep = "FROM"; } | <IN> { prep = "IN"; } )
+        { pos = getPos(); }
+        databaseName = CompoundIdentifier()
+    ]
+    [
+        [
+            <NOT>
+            {
+                notLike = true;
+            }
+        ]
+        <LIKE>  <QUOTED_STRING>
+        {
+            String likeCondition = SqlParserUtil.parseString(token.image);
+            likeLiteral = SqlLiteral.createCharString(likeCondition, getPos());
+        }
+    ]
+    {
+        return new SqlShowConnections(pos, prep, databaseName, notLike, likeLiteral);
     }
 }
 
@@ -3507,6 +3569,59 @@ SqlAlterModel SqlAlterModel() :
 }
 
 /**
+* ALTER CONNECTION [IF EXISTS] connectionName SET (property_key = property_val, ...)
+* ALTER CONNECTION [IF EXISTS] connectionName RENAME TO newConnectionName
+* ALTER CONNECTION [IF EXISTS] connectionName RESET (property_key, ...)
+* Alter temporary or system connection is not supported.
+*/
+SqlAlterConnection SqlAlterConnection() :
+{
+    SqlParserPos startPos;
+    boolean ifExists = false;
+    SqlIdentifier connectionIdentifier;
+    SqlIdentifier newConnectionIdentifier = null;
+    SqlNodeList propertyList = SqlNodeList.EMPTY;
+    SqlNodeList propertyKeyList = SqlNodeList.EMPTY;
+}
+{
+    <ALTER> <CONNECTION> { startPos = getPos(); }
+    ifExists = IfExistsOpt()
+    connectionIdentifier = CompoundIdentifier()
+    (
+        LOOKAHEAD(2)
+        <RENAME> <TO>
+        newConnectionIdentifier = CompoundIdentifier()
+        {
+            return new SqlAlterConnectionRename(
+                        startPos.plus(getPos()),
+                        connectionIdentifier,
+                        newConnectionIdentifier,
+                        ifExists);
+        }
+    |
+        <SET>
+        propertyList = Properties()
+        {
+            return new SqlAlterConnectionSet(
+                        startPos.plus(getPos()),
+                        connectionIdentifier,
+                        ifExists,
+                        propertyList);
+        }
+    |
+        <RESET>
+        propertyKeyList = PropertyKeys()
+        {
+            return new SqlAlterConnectionReset(
+                        startPos.plus(getPos()),
+                        connectionIdentifier,
+                        ifExists,
+                        propertyKeyList);
+        }
+    )
+}
+
+/**
 * DROP MODEL [IF EXIST] modelName
 */
 SqlDrop SqlDropModel(Span s, boolean isTemporary) :
@@ -3527,10 +3642,43 @@ SqlDrop SqlDropModel(Span s, boolean isTemporary) :
 }
 
 /**
+* DROP [TEMPORARY] [SYSTEM] CONNECTION [IF EXIST] connectionName
+*/
+SqlDrop SqlDropConnection(Span s, boolean isTemporary) :
+{
+    SqlIdentifier connectionIdentifier = null;
+    boolean ifExists = false;
+    boolean isSystemConnection = false;
+}
+{
+    [
+        <SYSTEM>
+        {
+            if (!isTemporary){
+                throw SqlUtil.newContextException(getPos(),
+                    ParserResource.RESOURCE.dropSystemConnectionOnlySupportTemporary());
+            }
+            isSystemConnection = true;
+        }
+    ]
+
+    <CONNECTION>
+
+    ifExists = IfExistsOpt()
+
+    connectionIdentifier = CompoundIdentifier()
+
+    {
+         return new SqlDropConnection(s.pos(), connectionIdentifier, ifExists, isTemporary, isSystemConnection);
+    }
+}
+
+/**
 * CREATE MODEL [IF NOT EXIST] modelName
 * [INPUT(col1 type1, col2 type2, ...)]
 * [OUTPUT(col3 type1, col4 type4, ...)]
 * [COMMENT model_comment]
+* [LANGUAGE PYTHON | JAVA]
 * WITH (option_key = option_val, ...)
 * [AS SELECT ...]
 */
@@ -3554,7 +3702,7 @@ SqlCreate SqlCreateModel(Span s, boolean isTemporary) :
 
     modelIdentifier = CompoundIdentifier()
     [
-        <INPUT> <LPAREN> { pos = getPos(); TableCreationContext ctx = new TableCreationContext();}
+        <INPUT> <LPAREN> { pos = getPos(); TableSchemaContext ctx = new TableSchemaContext();}
         TableColumn(ctx)
         (
             <COMMA> TableColumn(ctx)
@@ -3566,7 +3714,7 @@ SqlCreate SqlCreateModel(Span s, boolean isTemporary) :
         <RPAREN>
     ]
     [
-        <OUTPUT> <LPAREN> { pos = getPos(); TableCreationContext ctx = new TableCreationContext();}
+        <OUTPUT> <LPAREN> { pos = getPos(); TableSchemaContext ctx = new TableSchemaContext();}
         TableColumn(ctx)
         (
             <COMMA> TableColumn(ctx)
@@ -3579,8 +3727,7 @@ SqlCreate SqlCreateModel(Span s, boolean isTemporary) :
     ]
     [ <COMMENT> <QUOTED_STRING>
         {
-            String p = SqlParserUtil.parseString(token.image);
-            comment = SqlLiteral.createCharString(p, getPos());
+            comment = Comment();
         }
     ]
     [
@@ -3621,5 +3768,63 @@ SqlCreate SqlCreateModel(Span s, boolean isTemporary) :
             modelLanguage,
             isTemporary,
             ifNotExists);
+    }
+}
+
+/**
+* CREATE [TEMPORARY] [SYSTEM] CONNECTION [IF NOT EXISTS] [catalog_name.][db_name.]connection_name
+* [COMMENT connection_comment]
+* WITH (property_key = property_val, ...)
+*/
+SqlCreate SqlCreateConnection(Span s, boolean isTemporary) :
+{
+    final SqlParserPos startPos = s.pos();
+    boolean ifNotExists = false;
+    boolean isSystem = false;
+    SqlIdentifier connectionIdentifier;
+    SqlCharStringLiteral comment = null;
+    SqlNodeList propertyList = SqlNodeList.EMPTY;
+}
+{
+    [
+        <SYSTEM>
+        {
+            if (!isTemporary){
+                throw SqlUtil.newContextException(getPos(),
+                    ParserResource.RESOURCE.createSystemConnectionOnlySupportTemporary());
+            }
+            isSystem = true;
+        }
+    ]
+    <CONNECTION>
+
+    ifNotExists = IfNotExistsOpt()
+
+    connectionIdentifier = CompoundIdentifier()
+    [ <COMMENT> <QUOTED_STRING>
+        {
+            comment = Comment();
+        }
+    ]
+    <WITH>
+    propertyList = Properties()
+    {
+        return new SqlCreateConnection(startPos.plus(getPos()),
+            connectionIdentifier,
+            comment,
+            propertyList,
+            isTemporary,
+            isSystem,
+            ifNotExists);
+    }
+}
+
+SqlCharStringLiteral Comment() :
+{
+}
+{
+    {
+        String p = SqlParserUtil.parseString(token.image);
+        return SqlLiteral.createCharString(p, getPos());
     }
 }
