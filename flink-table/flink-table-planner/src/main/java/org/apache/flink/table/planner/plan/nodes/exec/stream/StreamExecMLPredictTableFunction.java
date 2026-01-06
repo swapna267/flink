@@ -34,11 +34,8 @@ import org.apache.flink.streaming.api.transformations.OneInputTransformation;
 import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.catalog.DataTypeFactory;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.data.conversion.DataStructureConverter;
-import org.apache.flink.table.data.conversion.DataStructureConverters;
 import org.apache.flink.table.functions.AsyncPredictFunction;
 import org.apache.flink.table.functions.PredictFunction;
-import org.apache.flink.table.functions.TableFunction;
 import org.apache.flink.table.functions.UserDefinedFunction;
 import org.apache.flink.table.functions.python.PythonFunctionInfo;
 import org.apache.flink.table.functions.python.PythonTableFunction;
@@ -46,11 +43,10 @@ import org.apache.flink.table.functions.python.utils.PythonFunctionUtils;
 import org.apache.flink.table.ml.AsyncPredictRuntimeProvider;
 import org.apache.flink.table.ml.ModelProvider;
 import org.apache.flink.table.ml.PredictRuntimeProvider;
-import org.apache.flink.table.ml.PythonPredictRuntimeProvider;
 import org.apache.flink.table.planner.calcite.FlinkContext;
 import org.apache.flink.table.planner.codegen.CodeGeneratorContext;
-import org.apache.flink.table.planner.codegen.FilterCodeGenerator;
-import org.apache.flink.table.planner.codegen.LookupJoinCodeGenerator;
+import org.apache.flink.table.planner.codegen.FunctionCallCodeGenerator;
+import org.apache.flink.table.planner.codegen.MLPredictCodeGenerator;
 import org.apache.flink.table.planner.delegation.PlannerBase;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNode;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeBase;
@@ -64,24 +60,20 @@ import org.apache.flink.table.planner.plan.nodes.exec.spec.MLPredictSpec;
 import org.apache.flink.table.planner.plan.nodes.exec.spec.ModelSpec;
 import org.apache.flink.table.planner.plan.nodes.exec.utils.CommonPythonUtil;
 import org.apache.flink.table.planner.plan.nodes.exec.utils.ExecNodeUtil;
-import org.apache.flink.table.planner.plan.utils.FunctionCallUtils;
-import org.apache.flink.table.planner.utils.JavaScalaConversionUtil;
+import org.apache.flink.table.planner.plan.utils.FunctionCallUtil;
 import org.apache.flink.table.runtime.collector.ListenableCollector;
-import org.apache.flink.table.runtime.collector.TableFunctionResultFuture;
 import org.apache.flink.table.runtime.functions.ml.ModelPredictRuntimeProviderContext;
 import org.apache.flink.table.runtime.generated.GeneratedCollector;
 import org.apache.flink.table.runtime.generated.GeneratedFunction;
-import org.apache.flink.table.runtime.generated.GeneratedResultFuture;
 import org.apache.flink.table.runtime.operators.join.FlinkJoinType;
-import org.apache.flink.table.runtime.operators.join.lookup.AsyncLookupJoinRunner;
-import org.apache.flink.table.runtime.operators.join.lookup.LookupJoinRunner;
-import org.apache.flink.table.runtime.typeutils.InternalSerializers;
+import org.apache.flink.table.runtime.operators.ml.AsyncMLPredictRunner;
+import org.apache.flink.table.runtime.operators.ml.MLPredictRunner;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.util.Preconditions;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
 import javax.annotation.Nullable;
 
@@ -89,7 +81,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /** Stream {@link ExecNode} for {@code ML_PREDICT}. */
 @ExecNodeMetadata(
@@ -112,8 +103,6 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
     public static final String FIELD_NAME_MODEL_SPEC = "modelSpec";
     public static final String FIELD_NAME_ASYNC_OPTIONS = "asyncOptions";
 
-    private static final ObjectMapper objectMapper = new ObjectMapper();
-
     @JsonProperty(FIELD_NAME_ML_PREDICT_SPEC)
     private final MLPredictSpec mlPredictSpec;
 
@@ -121,13 +110,13 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
     private final ModelSpec modelSpec;
 
     @JsonProperty(FIELD_NAME_ASYNC_OPTIONS)
-    private final @Nullable FunctionCallUtils.AsyncOptions asyncOptions;
+    private final @Nullable FunctionCallUtil.AsyncOptions asyncOptions;
 
     public StreamExecMLPredictTableFunction(
             ReadableConfig persistedConfig,
             MLPredictSpec mlPredictSpec,
             ModelSpec modelSpec,
-            @Nullable FunctionCallUtils.AsyncOptions asyncOptions,
+            @Nullable FunctionCallUtil.AsyncOptions asyncOptions,
             InputProperty inputProperty,
             RowType outputType,
             String description) {
@@ -151,7 +140,7 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
             @JsonProperty(FIELD_NAME_ML_PREDICT_SPEC) MLPredictSpec mlPredictSpec,
             @JsonProperty(FIELD_NAME_MODEL_SPEC) ModelSpec modelSpec,
             @JsonProperty(FIELD_NAME_ASYNC_OPTIONS) @Nullable
-                    FunctionCallUtils.AsyncOptions asyncOptions,
+                    FunctionCallUtil.AsyncOptions asyncOptions,
             @JsonProperty(FIELD_NAME_INPUT_PROPERTIES) List<InputProperty> inputProperties,
             @JsonProperty(FIELD_NAME_OUTPUT_TYPE) RowType outputType,
             @JsonProperty(FIELD_NAME_DESCRIPTION) String description) {
@@ -167,8 +156,8 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
         Transformation<RowData> inputTransformation =
                 (Transformation<RowData>) getInputEdges().get(0).translateToPlan(planner);
 
-        // Check if this is a Python model by looking at model language
-        String modelLanguage = modelSpec.getContextResolvedModel().getResolvedModel().getLanguage();
+        FlinkContext context = planner.getFlinkContext();
+        DataTypeFactory dataTypeFactory = context.getCatalogManager().getDataTypeFactory();
 
         RowType inputType = (RowType) getInputEdges().get(0).getOutputType();
         RowType modelOutputType =
@@ -179,9 +168,8 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
                                 .getResolvedOutputSchema()
                                 .toPhysicalRowDataType()
                                 .getLogicalType();
-        FlinkContext context = planner.getFlinkContext();
-        DataTypeFactory dataTypeFactory = context.getCatalogManager().getDataTypeFactory();
 
+        String modelLanguage = modelSpec.getContextResolvedModel().getResolvedModel().getLanguage();
         if ("PYTHON".equalsIgnoreCase(modelLanguage)) {
             // Create PythonTableFunction directly using ModelInferenceTableFunction
             PythonTableFunction pythonTableFunction =
@@ -205,7 +193,6 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
         ModelProvider provider = modelSpec.getModelProvider(planner.getFlinkContext());
         boolean async = asyncOptions != null;
         UserDefinedFunction predictFunction = findModelFunction(provider, async);
-
         return async
                 ? createAsyncModelPredict(
                         inputTransformation,
@@ -227,6 +214,21 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
                         (PredictFunction) predictFunction);
     }
 
+    private PythonTableFunction createPythonTableFunction(
+            FlinkContext context, ModelSpec modelSpec) {
+
+        // Use the class constructor directly, not the create_udtf method
+        String pythonClassName =
+                "pyflink.table.ml.model_inference_table_function.model_inference_table_function_udtf";
+
+        // Create PythonTableFunction using PythonFunctionUtils
+        return (PythonTableFunction)
+                PythonFunctionUtils.getPythonFunction(
+                        pythonClassName,
+                        context.getTableConfig().getConfiguration(),
+                        context.getClassLoader());
+    }
+
     private Transformation<RowData> createModelPredict(
             Transformation<RowData> inputTransformation,
             ExecNodeConfig config,
@@ -235,9 +237,9 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
             RowType inputRowType,
             RowType modelOutputType,
             RowType resultRowType,
-            TableFunction<RowData> predictFunction) {
+            PredictFunction predictFunction) {
         GeneratedFunction<FlatMapFunction<RowData, RowData>> generatedFetcher =
-                LookupJoinCodeGenerator.generateSyncLookupFunction(
+                MLPredictCodeGenerator.generateSyncPredictFunction(
                         config,
                         classLoader,
                         dataTypeFactory,
@@ -246,25 +248,15 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
                         resultRowType,
                         mlPredictSpec.getFeatures(),
                         predictFunction,
-                        "MLPredict",
+                        modelSpec.getContextResolvedModel().getIdentifier().asSummaryString(),
                         config.get(PipelineOptions.OBJECT_REUSE));
         GeneratedCollector<ListenableCollector<RowData>> generatedCollector =
-                LookupJoinCodeGenerator.generateCollector(
+                MLPredictCodeGenerator.generateCollector(
                         new CodeGeneratorContext(config, classLoader),
                         inputRowType,
                         modelOutputType,
-                        (RowType) getOutputType(),
-                        JavaScalaConversionUtil.toScala(Optional.empty()),
-                        JavaScalaConversionUtil.toScala(Optional.empty()),
-                        true);
-        LookupJoinRunner mlPredictRunner =
-                new LookupJoinRunner(
-                        generatedFetcher,
-                        generatedCollector,
-                        FilterCodeGenerator.generateFilterCondition(
-                                config, classLoader, null, inputRowType),
-                        false,
-                        modelOutputType.getFieldCount());
+                        (RowType) getOutputType());
+        MLPredictRunner mlPredictRunner = new MLPredictRunner(generatedFetcher, generatedCollector);
         SimpleOperatorFactory<RowData> operatorFactory =
                 SimpleOperatorFactory.of(new ProcessOperator<>(mlPredictRunner));
         return ExecNodeUtil.createOneInputTransformation(
@@ -286,9 +278,9 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
             RowType modelOutputType,
             RowType resultRowType,
             AsyncPredictFunction asyncPredictFunction) {
-        LookupJoinCodeGenerator.GeneratedTableFunctionWithDataType<AsyncFunction<RowData, Object>>
+        FunctionCallCodeGenerator.GeneratedTableFunctionWithDataType<AsyncFunction<RowData, Object>>
                 generatedFuncWithType =
-                        LookupJoinCodeGenerator.generateAsyncLookupFunction(
+                        MLPredictCodeGenerator.generateAsyncPredictFunction(
                                 config,
                                 classLoader,
                                 dataTypeFactory,
@@ -297,29 +289,14 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
                                 resultRowType,
                                 mlPredictSpec.getFeatures(),
                                 asyncPredictFunction,
-                                "AsyncMLPredict");
-
-        GeneratedResultFuture<TableFunctionResultFuture<RowData>> generatedResultFuture =
-                LookupJoinCodeGenerator.generateTableAsyncCollector(
-                        config,
-                        classLoader,
-                        "TableFunctionResultFuture",
-                        inputRowType,
-                        modelOutputType,
-                        JavaScalaConversionUtil.toScala(Optional.empty()));
-
-        DataStructureConverter<?, ?> fetcherConverter =
-                DataStructureConverters.getConverter(generatedFuncWithType.dataType());
+                                modelSpec
+                                        .getContextResolvedModel()
+                                        .getIdentifier()
+                                        .asSummaryString());
         AsyncFunction<RowData, RowData> asyncFunc =
-                new AsyncLookupJoinRunner(
-                        generatedFuncWithType.tableFunc(),
-                        (DataStructureConverter<RowData, Object>) fetcherConverter,
-                        generatedResultFuture,
-                        FilterCodeGenerator.generateFilterCondition(
-                                config, classLoader, null, inputRowType),
-                        InternalSerializers.create(modelOutputType),
-                        false,
-                        asyncOptions.asyncBufferCapacity);
+                new AsyncMLPredictRunner(
+                        (GeneratedFunction) generatedFuncWithType.tableFunc(),
+                        Preconditions.checkNotNull(asyncOptions).asyncBufferCapacity);
         return ExecNodeUtil.createOneInputTransformation(
                 inputTransformation,
                 createTransformationMeta(ML_PREDICT_TRANSFORMATION, config),
@@ -333,7 +310,28 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
                 false);
     }
 
-    // Python-specific createModelPredict method
+    private UserDefinedFunction findModelFunction(ModelProvider provider, boolean async) {
+        ModelPredictRuntimeProviderContext context =
+                new ModelPredictRuntimeProviderContext(
+                        modelSpec.getContextResolvedModel().getResolvedModel(),
+                        Configuration.fromMap(mlPredictSpec.getRuntimeConfig()));
+        if (async) {
+            if (provider instanceof AsyncPredictRuntimeProvider) {
+                return ((AsyncPredictRuntimeProvider) provider).createAsyncPredictFunction(context);
+            }
+        } else {
+            if (provider instanceof PredictRuntimeProvider) {
+                return ((PredictRuntimeProvider) provider).createPredictFunction(context);
+            }
+        }
+
+        throw new TableException(
+                "Required "
+                        + (async ? "async" : "sync")
+                        + " model function by planner, but ModelProvider "
+                        + "does not offer a valid model function.");
+    }
+
     // TODO: Move to CommonExecPythonCorrelate
     private Transformation<RowData> createModelPredict(
             PlannerBase planner,
@@ -399,8 +397,8 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
                 mlPredictSpec.getFeatures().stream()
                         .mapToInt(
                                 param -> {
-                                    if (param instanceof FunctionCallUtils.FieldRef) {
-                                        return ((FunctionCallUtils.FieldRef) param).index;
+                                    if (param instanceof FunctionCallUtil.FieldRef) {
+                                        return ((FunctionCallUtil.FieldRef) param).index;
                                     } else {
                                         throw new TableException(
                                                 "Only FieldRef parameters are supported for Python ML_PREDICT features");
@@ -433,57 +431,6 @@ public class StreamExecMLPredictTableFunction extends ExecNodeBase<RowData>
                 false);
     }
 
-    private UserDefinedFunction findModelFunction(ModelProvider provider, boolean async) {
-        ModelPredictRuntimeProviderContext context =
-                new ModelPredictRuntimeProviderContext(
-                        modelSpec.getContextResolvedModel().getResolvedModel(),
-                        Configuration.fromMap(mlPredictSpec.getRuntimeConfig()));
-
-        if (provider instanceof PythonPredictRuntimeProvider) {
-            return (UserDefinedFunction)
-                    ((PythonPredictRuntimeProvider) provider)
-                            .getPythonPredictFunction()
-                            .createPythonFunction();
-        }
-
-        if (async) {
-            if (provider instanceof AsyncPredictRuntimeProvider) {
-                return ((AsyncPredictRuntimeProvider) provider).createAsyncPredictFunction(context);
-            }
-        } else {
-            if (provider instanceof PredictRuntimeProvider) {
-                return ((PredictRuntimeProvider) provider).createPredictFunction(context);
-            }
-        }
-
-        throw new TableException(
-                "Required "
-                        + (async ? "async" : "sync")
-                        + " model function by planner, but ModelProvider "
-                        + "does not offer a valid model function.");
-    }
-
-    private PythonTableFunction createPythonTableFunction(
-            FlinkContext context, ModelSpec modelSpec) {
-
-        // Use the class constructor directly, not the create_udtf method
-        String pythonClassName =
-                "pyflink.table.ml.model_inference_table_function.model_inference_table_function_udtf";
-
-        // Create PythonTableFunction using PythonFunctionUtils
-        return (PythonTableFunction)
-                PythonFunctionUtils.getPythonFunction(
-                        pythonClassName,
-                        context.getTableConfig().getConfiguration(),
-                        context.getClassLoader());
-    }
-
-    /**
-     * Generates the model configuration JSON string from ModelSpec.
-     *
-     * @param modelSpec the model specification containing model options and properties
-     * @return JSON configuration string for the Python runtime
-     */
     private Map<String, String> generateModelConfig(ModelSpec modelSpec) {
         Map<String, String> config = new HashMap<>();
 
