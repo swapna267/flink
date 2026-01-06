@@ -142,8 +142,7 @@ class ModelInferenceTableFunction(TableFunction):
             self._batch_buffer = []
             
         except Exception as e:
-            self._logger.error(f"Failed to initialize ModelInferenceTableFunction: {e}")
-            raise RuntimeError(f"Model initialization failed:::::")
+            raise RuntimeError(f"Failed to initialize ModelInferenceTableFunction: {e}")
 
     def _setup_model_config_from_context(self, context):
         """

@@ -59,7 +59,8 @@ public class SqlCreateModelConverter implements SqlNodeConverter<SqlCreateModel>
                         schemaBuilderUtil.getSchema(sqlCreateModel.getInputColumnList(), true),
                         schemaBuilderUtil.getSchema(sqlCreateModel.getOutputColumnList(), false),
                         modelOptions,
-                        sqlCreateModel.getComment());
+                        sqlCreateModel.getComment(),
+                        sqlCreateModel.getModelLanguage());
 
         return new CreateModelOperation(
                 identifier,

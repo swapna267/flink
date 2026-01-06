@@ -206,8 +206,6 @@ public enum ProtoUtils {
                                     .setKey(entry.getKey())
                                     .setValue(entry.getValue())
                                     .build());
-                } else {
-                    System.out.println("Value is NULL for key:" + entry.getKey());
                 }
             }
             builder.setModelContext(modelContextBuilder.build());

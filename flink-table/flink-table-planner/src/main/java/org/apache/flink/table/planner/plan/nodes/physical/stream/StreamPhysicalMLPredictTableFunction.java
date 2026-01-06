@@ -165,6 +165,10 @@ public class StreamPhysicalMLPredictTableFunction extends SingleRel implements S
 
     private @Nullable FunctionCallUtil.AsyncOptions buildAsyncOptions(
             RexModelCall modelCall, Map<String, String> runtimeConfig) {
+        if (modelCall.getModelProvider() == null) {
+            return null;
+        }
+
         boolean isAsyncEnabled = isAsyncMLPredict(modelCall.getModelProvider(), runtimeConfig);
         if (isAsyncEnabled) {
             return MLPredictUtil.getMergedMLPredictAsyncOptions(

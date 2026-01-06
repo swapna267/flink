@@ -42,18 +42,34 @@ class Input(_message.Message):
     def __init__(self, udf: _Optional[_Union[UserDefinedFunction, _Mapping]] = ..., inputOffset: _Optional[int] = ..., inputConstant: _Optional[bytes] = ...) -> None: ...
 
 class UserDefinedFunction(_message.Message):
-    __slots__ = ("payload", "inputs", "window_index", "takes_row_as_input", "is_pandas_udf")
+    __slots__ = ("payload", "inputs", "window_index", "takes_row_as_input", "is_pandas_udf", "model_context")
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
     INPUTS_FIELD_NUMBER: _ClassVar[int]
     WINDOW_INDEX_FIELD_NUMBER: _ClassVar[int]
     TAKES_ROW_AS_INPUT_FIELD_NUMBER: _ClassVar[int]
     IS_PANDAS_UDF_FIELD_NUMBER: _ClassVar[int]
+    MODEL_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     payload: bytes
     inputs: _containers.RepeatedCompositeFieldContainer[Input]
     window_index: int
     takes_row_as_input: bool
     is_pandas_udf: bool
-    def __init__(self, payload: _Optional[bytes] = ..., inputs: _Optional[_Iterable[_Union[Input, _Mapping]]] = ..., window_index: _Optional[int] = ..., takes_row_as_input: bool = ..., is_pandas_udf: bool = ...) -> None: ...
+    model_context: ModelContext
+    def __init__(self, payload: _Optional[bytes] = ..., inputs: _Optional[_Iterable[_Union[Input, _Mapping]]] = ..., window_index: _Optional[int] = ..., takes_row_as_input: bool = ..., is_pandas_udf: bool = ..., model_context: _Optional[_Union[ModelContext, _Mapping]] = ...) -> None: ...
+
+class ModelContext(_message.Message):
+    __slots__ = ("model_parameters",)
+    MODEL_PARAMETERS_FIELD_NUMBER: _ClassVar[int]
+    model_parameters: _containers.RepeatedCompositeFieldContainer[ModelParameter]
+    def __init__(self, model_parameters: _Optional[_Iterable[_Union[ModelParameter, _Mapping]]] = ...) -> None: ...
+
+class ModelParameter(_message.Message):
+    __slots__ = ("key", "value")
+    KEY_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    key: str
+    value: str
+    def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
 
 class UserDefinedFunctions(_message.Message):
     __slots__ = ("udfs", "metric_enabled", "windows", "profile_enabled", "job_parameters")
