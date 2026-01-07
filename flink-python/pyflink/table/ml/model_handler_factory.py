@@ -24,7 +24,7 @@ pattern as the existing ModelProviderFactory system.
 Example Usage:
     # Configuration-driven selection
     model_config = {
-        "model_type": "pytorch",
+        "provider": "pytorch",
         "state_dict_path": "model.pth", 
         "model_class": "MyModel",
         "device": "GPU"
@@ -39,14 +39,14 @@ Example Usage:
 
 import importlib.metadata
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Set, Type
+from typing import Dict, Any, Set
 from pyflink.table.ml.model_handler import ModelHandler
 
 
 class ModelHandlerFactory(ABC):
     """
     Abstract base class for ModelHandler factories that create ModelHandler instances
-    based on configuration. Each factory is responsible for a specific model type
+    based on configuration. Each factory is responsible for a specific model provider
     and framework (e.g., PyTorch, TensorFlow, scikit-learn, ONNX).
     
     This follows the same pattern as ModelProviderFactory but for ModelHandlers.
@@ -161,8 +161,6 @@ class ModelHandlerRegistry:
     Registry for ModelHandler factories that uses Python entry points for discovery.
     Factories are automatically discovered from installed packages that register
     entry points under the 'pyflink.table.ml.model_handlers' group.
-    
-    This follows the same pattern as ModelProviderRegistry but for ModelHandlers.
     """
     
     ENTRY_POINT_GROUP = 'pyflink.table.ml.model_handlers'
@@ -259,7 +257,7 @@ class ModelHandlerRegistry:
         """
         Creates a ModelHandler using the appropriate factory for the given model type.
         
-        :param model_type: Model type identifier
+        :param provider: Model provider identifier
         :param model_config: Model configuration
         :return: Configured ModelHandler instance
         :raises KeyError: If no factory is registered for the model type
@@ -344,7 +342,7 @@ def create_model_handler_from_config(model_config: Dict[str, Any]) -> ModelHandl
     
     Example:
         model_config = {
-            "model_type": "pytorch",
+            "provider": "pytorch",
             "state_dict_path": "model.pth", 
             "model_class": "MyModel",
             "device": "GPU"
@@ -356,10 +354,10 @@ def create_model_handler_from_config(model_config: Dict[str, Any]) -> ModelHandl
     :raises KeyError: If 'model_type' is missing or no factory is registered for it
     :raises ValueError: If model configuration is invalid
     """
-    if 'model_type' not in model_config:
+    if 'provider' not in model_config:
         raise KeyError("Model configuration must contain 'model_type' field")
     
-    model_type = model_config['model_type']
+    model_type = model_config['provider']
     return _registry.create_model_handler(model_type, model_config)
 
 

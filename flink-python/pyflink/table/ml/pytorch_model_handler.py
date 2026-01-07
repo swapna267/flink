@@ -27,18 +27,10 @@ Example Usage:
         model_class=MyPyTorchModel,
         device="GPU"
     )
-
-    # Keyed tensor handler for multi-input models
-    keyed_handler = PyTorchModelHandlerKeyedTensor(
-        state_dict_path="model.pth",
-        model_class=MyMultiInputModel,
-        device="CPU"
-    )
 """
 
 import logging
 import pickle
-from collections import defaultdict
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Union
 
 from pyflink.table.ml.model_handler import ModelHandler, PredictionResult
@@ -312,154 +304,6 @@ class PyTorchModelHandlerTensor(ModelHandler[torch.Tensor, PredictionResult, tor
         pass  # PyTorch models can accept arbitrary keyword arguments
 
 
-class PyTorchModelHandlerKeyedTensor(
-    ModelHandler[Dict[str, torch.Tensor], PredictionResult, torch.nn.Module]):
-    """ModelHandler implementation for PyTorch models with keyed tensor inputs.
-
-    This handler supports models that take multiple named inputs as dictionaries
-    of tensors, useful for multi-input architectures.
-    """
-
-    def __init__(
-        self,
-        state_dict_path: Optional[str] = None,
-        model_class: Optional[Callable[..., torch.nn.Module]] = None,
-        model_params: Optional[Dict[str, Any]] = None,
-        device: str = 'CPU',
-        torch_script_model_path: Optional[str] = None,
-        min_batch_size: Optional[int] = None,
-        max_batch_size: Optional[int] = None,
-        load_model_args: Optional[Dict[str, Any]] = None,
-        **kwargs
-    ):
-        """Initialize PyTorch keyed tensor model handler.
-
-        Args:
-            state_dict_path: Path to the saved model state dictionary.
-            model_class: PyTorch model class that defines the model structure.
-            model_params: Dictionary of arguments required to instantiate the model class.
-            device: Device to run the model on ('CPU' or 'GPU').
-            torch_script_model_path: Path to TorchScript model file.
-            min_batch_size: Minimum batch size for batching inputs.
-            max_batch_size: Maximum batch size for batching inputs.
-            load_model_args: Additional arguments for torch.load().
-            **kwargs: Additional arguments including 'env_vars'.
-        """
-        super().__init__()
-        _validate_torch_availability()
-
-        self._state_dict_path = state_dict_path
-        self._model_class = model_class
-        self._model_params = model_params if model_params else {}
-        self._torch_script_model_path = torch_script_model_path
-        self._load_model_args = load_model_args if load_model_args else {}
-        self._env_vars = kwargs.get('env_vars', {})
-
-        # Set device
-        if device.upper() == 'GPU':
-            logging.info("Device is set to CUDA")
-            self._device = torch.device('cuda')
-        else:
-            logging.info("Device is set to CPU")
-            self._device = torch.device('cpu')
-
-        # Batching configuration
-        self._batching_kwargs = {}
-        if min_batch_size is not None:
-            self._batching_kwargs['min_batch_size'] = min_batch_size
-        if max_batch_size is not None:
-            self._batching_kwargs['max_batch_size'] = max_batch_size
-
-        _validate_constructor_args(
-            state_dict_path=self._state_dict_path,
-            model_class=self._model_class,
-            torch_script_model_path=self._torch_script_model_path
-        )
-
-    def load_model(self) -> torch.nn.Module:
-        """Loads and initializes a PyTorch model for processing."""
-        model, device = _load_model(
-            model_class=self._model_class,
-            state_dict_path=self._state_dict_path,
-            device=self._device,
-            model_params=self._model_params,
-            torch_script_model_path=self._torch_script_model_path,
-            load_model_args=self._load_model_args
-        )
-        self._device = device
-        return model
-
-    def run_inference(
-        self,
-        batch: Sequence[Dict[str, torch.Tensor]],
-        model: torch.nn.Module,
-        inference_args: Optional[Dict[str, Any]] = None
-    ) -> Iterable[PredictionResult]:
-        """Runs inference on a batch of keyed tensors.
-
-        Args:
-            batch: Sequence of dictionaries mapping keys to tensors.
-            model: Loaded PyTorch model.
-            inference_args: Additional arguments for model inference.
-
-        Returns:
-            Iterable of PredictionResult objects.
-        """
-        inference_args = inference_args if inference_args else {}
-        model_id = (
-            self._state_dict_path
-            if not self._torch_script_model_path
-            else self._torch_script_model_path
-        )
-
-        # Group tensors by key across all examples in the batch
-        key_to_tensor_list = defaultdict(list)
-
-        with torch.no_grad():
-            for example in batch:
-                for key, tensor in example.items():
-                    key_to_tensor_list[key].append(tensor)
-
-            # Stack tensors for each key
-            key_to_batched_tensors = {}
-            for key in key_to_tensor_list:
-                batched_tensors = torch.stack(key_to_tensor_list[key])
-                batched_tensors = _convert_to_device(batched_tensors, self._device)
-                key_to_batched_tensors[key] = batched_tensors
-
-            # Run model with keyed inputs
-            predictions = model(**key_to_batched_tensors, **inference_args)
-            return _convert_to_result(batch, predictions, model_id)
-
-    def get_num_bytes(self, batch: Sequence[Dict[str, torch.Tensor]]) -> int:
-        """Returns the number of bytes for a batch of keyed tensors."""
-        total_bytes = 0
-        for example in batch:
-            for tensor in example.values():
-                total_bytes += tensor.element_size() * tensor.nelement()
-        return total_bytes
-
-    def get_metrics_namespace(self) -> str:
-        """Returns the metrics namespace for PyTorch models."""
-        return 'PyFlinkML_PyTorch'
-
-    def batch_elements_kwargs(self) -> Mapping[str, Any]:
-        """Returns batching configuration."""
-        return self._batching_kwargs
-
-    def update_model_path(self, model_path: Optional[str] = None) -> None:
-        """Updates the model path for dynamic model loading."""
-        if model_path:
-            if self._torch_script_model_path:
-                self._torch_script_model_path = model_path
-            else:
-                self._state_dict_path = model_path
-
-    def validate_inference_args(self, inference_args: Optional[Dict[str, Any]]) -> None:
-        """Validates inference arguments (PyTorch allows any additional args)."""
-        pass  # PyTorch models can accept arbitrary keyword arguments
-
-
 class PyTorchModelHandlerRow(ModelHandler[Row, PredictionResult, torch.nn.Module]):
     """ModelHandler implementation for PyTorch models with PyFlink Row inputs.
 
@@ -527,51 +371,111 @@ class PyTorchModelHandlerRow(ModelHandler[Row, PredictionResult, torch.nn.Module
         )
 
     def _default_row_to_tensor(self, row: Row) -> torch.Tensor:
-        """Default conversion from PyFlink Row to PyTorch tensor."""
+        """Default conversion from PyFlink Row to PyTorch tensor.
+        
+        Uses simple regex-based tokenization similar to Apache Beam's approach.
+        Keeps it simple for POC - no external dependencies.
+        """
+        import re
+        
         # Convert row values to a list of numbers
         values = []
         for value in row:
             if isinstance(value, (int, float)):
                 values.append(float(value))
             elif isinstance(value, str):
-                # For string values, create multiple features from the text
-                # This creates a simple bag-of-words style encoding with 10 features
-                text = str(value).lower()
-                words = text.split()
-                
-                # Create 10 features from the text
-                text_features = []
-                
-                # Feature 1: Length of text
-                text_features.append(float(len(text)) / 100.0)  # Normalize
-                
-                # Feature 2: Number of words
-                text_features.append(float(len(words)) / 10.0)  # Normalize
-                
-                # Feature 3-10: Hash different aspects of the text
-                for j in range(8):
-                    if j < len(words):
-                        word_hash = float(hash(words[j]) % 10000) / 10000.0
-                    else:
-                        word_hash = 0.0  # Padding for shorter texts
-                    text_features.append(word_hash)
-                
+                # Simple text tokenization following Beam's pattern
+                text_features = self._simple_text_to_features(str(value))
                 values.extend(text_features)
             else:
-                # For unknown types, add padding zeros to reach 10 features
+                # For unknown types, add padding zeros
                 values.extend([0.0] * 10)
 
         # Ensure we have exactly 10 features (model expects 10 input features)
         if len(values) < 10:
-            # Pad with zeros if we have fewer than 10 features
-            padding_needed = 10 - len(values)
-            values.extend([0.0] * padding_needed)
+            values.extend([0.0] * (10 - len(values)))
         elif len(values) > 10:
-            # Truncate if we have more than 10 features
             values = values[:10]
 
-        tensor = torch.tensor(values, dtype=torch.float32)
-        return tensor
+        return torch.tensor(values, dtype=torch.float32)
+
+    def _simple_text_to_features(self, text: str, num_features: int = 10) -> list:
+        """Convert text to numerical features using simple tokenization.
+        
+        Based on Apache Beam's simple approach - regex tokenization, no NLP libraries.
+        
+        Args:
+            text: Input text string
+            num_features: Number of features to generate
+            
+        Returns:
+            List of numerical features
+        """
+        import re
+        
+        # Simple tokenization: extract word tokens (Beam's pattern)
+        text = text.lower()
+        tokens = re.findall(r'\b\w+\b', text)  # Extract alphanumeric word sequences
+        
+        features = []
+        
+        # Feature 1: Token count (normalized)
+        features.append(min(len(tokens) / 20.0, 1.0))
+        
+        # Feature 2: Average token length (normalized) 
+        if tokens:
+            avg_length = sum(len(token) for token in tokens) / len(tokens)
+            features.append(min(avg_length / 8.0, 1.0))
+        else:
+            features.append(0.0)
+        
+        # Features 3-10: Simple vocabulary presence (binary features)
+        vocab_features = self._get_simple_vocab_features(tokens)
+        features.extend(vocab_features)
+        
+        # Pad or truncate to exact number of features
+        if len(features) < num_features:
+            features.extend([0.0] * (num_features - len(features)))
+        elif len(features) > num_features:
+            features = features[:num_features]
+            
+        return features
+
+    def _get_simple_vocab_features(self, tokens: list) -> list:
+        """Generate simple vocabulary-based features from tokens.
+        
+        Returns 8 binary features based on word categories - simple POC approach.
+        """
+        # Simple word categories for basic text classification
+        categories = [
+            # Positive sentiment words
+            {'good', 'great', 'excellent', 'amazing', 'wonderful', 'best', 'perfect', 'love'},
+            # Negative sentiment words  
+            {'bad', 'terrible', 'awful', 'horrible', 'worst', 'hate', 'disgusting'},
+            # Action words
+            {'run', 'walk', 'go', 'get', 'make', 'take', 'see', 'do'},
+            # Time words
+            {'today', 'yesterday', 'tomorrow', 'now', 'then', 'when', 'always'},
+            # Question words
+            {'what', 'when', 'where', 'who', 'why', 'how', 'which'},
+            # Common function words
+            {'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to'},
+            # Size/quantity words
+            {'big', 'small', 'many', 'few', 'all', 'some', 'more', 'less'},
+            # Numbers as words
+            {'one', 'two', 'three', 'four', 'five', 'zero', 'ten', 'hundred'}
+        ]
+        
+        features = []
+        token_set = set(tokens)
+        
+        # Generate binary feature for each category
+        for category_words in categories:
+            # 1.0 if any word from this category is present, 0.0 otherwise
+            has_category_word = 1.0 if token_set.intersection(category_words) else 0.0
+            features.append(has_category_word)
+            
+        return features
 
     def load_model(self) -> torch.nn.Module:
         """Loads and initializes a PyTorch model for processing."""
@@ -615,7 +519,7 @@ class PyTorchModelHandlerRow(ModelHandler[Row, PredictionResult, torch.nn.Module
             for row in batch:
                 tensor = self._row_to_tensor_fn(row)
                 tensors.append(tensor)
-            
+
             batched_tensors = torch.stack(tensors)
             batched_tensors = _convert_to_device(batched_tensors, self._device)
 

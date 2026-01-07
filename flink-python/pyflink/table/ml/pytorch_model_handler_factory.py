@@ -32,7 +32,7 @@ Example Configuration:
     
     # Row input handler  
     config = {
-        "model_type": "pytorch",
+        "provider": "pytorch",
         "input_type": "row", 
         "torch_script_model_path": "model_scripted.pt",
         "device": "CPU"
@@ -46,7 +46,6 @@ from pyflink.table.ml.model_handler import ModelHandler
 from pyflink.table.ml.model_handler_factory import ModelHandlerFactory
 from pyflink.table.ml.pytorch_model_handler import (
     PyTorchModelHandlerTensor,
-    PyTorchModelHandlerKeyedTensor, 
     PyTorchModelHandlerRow,
     TORCH_AVAILABLE
 )
@@ -83,7 +82,7 @@ class PyTorchModelHandlerFactory(ModelHandlerFactory):
     
     def get_supported_input_types(self) -> Set[str]:
         """Returns supported input types."""
-        return {"tensor", "keyed_tensor", "row"}
+        return {"tensor", "row"}
     
     def get_supported_output_types(self) -> Set[str]:
         """Returns supported output types."""
@@ -149,8 +148,6 @@ class PyTorchModelHandlerFactory(ModelHandlerFactory):
         # Create appropriate handler based on input type
         if input_type == "tensor":
             return PyTorchModelHandlerTensor(**common_args)
-        elif input_type == "keyed_tensor":
-            return PyTorchModelHandlerKeyedTensor(**common_args)
         elif input_type == "row":
             # Add row-specific arguments
             row_to_tensor_fn = model_config.get("row_to_tensor_fn")

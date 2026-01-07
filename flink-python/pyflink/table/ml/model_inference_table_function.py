@@ -24,7 +24,7 @@ and metrics collection.
 Example Usage:
     # Create from model configuration
     model_config = {
-        "model_type": "pytorch",
+        "provider": "pytorch",
         "input_type": "row", 
         "state_dict_path": "model.pth",
         "model_class": "my_package.MyModel"
@@ -39,8 +39,7 @@ Example Usage:
         ])
     )
     
-    # Use in PyFlink table
-    table.join_lateral(inference_fn.alias("pred", "conf"))
+
 """
 
 import json
@@ -67,17 +66,6 @@ class ModelInferenceTableFunction(TableFunction):
     """
 
     def __init__(self):
-        """
-        Initialize the ModelInference TableFunction.
-
-        Args:
-            model_handler: Pre-created ModelHandler instance (optional).
-            model_config: Model configuration dictionary for creating ModelHandler.
-            batch_size: Maximum batch size for inference calls.
-            timeout_ms: Timeout for inference operations in milliseconds.
-            enable_metrics: Whether to collect performance metrics.
-            error_handling: How to handle inference errors ("raise", "log_and_continue", "return_default").
-        """
         super().__init__()
         
         self._model_handler = None
@@ -129,7 +117,7 @@ class ModelInferenceTableFunction(TableFunction):
             # Set environment variables
             self._model_handler.set_environment_vars()
             
-            # Load the model
+            # Load the model directly (no caching)
             self._logger.info("Loading ML model...")
             self._model = self._model_handler.load_model()
             
@@ -171,7 +159,7 @@ class ModelInferenceTableFunction(TableFunction):
             'init_properties': self.init_properties,
             'input_schema': self.input_schema,
             'output_schema': self.output_schema,
-            'model_type': context.get_job_parameter('model_type', 'pytorch'),
+            'provider': context.get_job_parameter('provider', 'pytorch'),
             'input_type': context.get_job_parameter('input_type', 'row'),
             'state_dict_path': context.get_job_parameter('state_dict_path', None),
             'torch_script_model_path': context.get_job_parameter('torch_script_model_path', None),
@@ -189,9 +177,6 @@ class ModelInferenceTableFunction(TableFunction):
         
         # Initialize the function with extracted configuration
         self._initialize_from_config(config)
-        
-        # Store for backward compatibility
-        self.model_config_json = None  # No longer using JSON string format
 
     def _initialize_from_config(self, config: Dict[str, Any]):
         """
@@ -232,7 +217,7 @@ class ModelInferenceTableFunction(TableFunction):
         model_config = {}
         
         # Map common fields
-        model_config['model_type'] = config.get('model_type', 'pytorch')
+        model_config['provider'] = config.get('provider', 'pytorch')
         model_config['input_type'] = config.get('input_type', 'row')
         
         # Model loading configuration

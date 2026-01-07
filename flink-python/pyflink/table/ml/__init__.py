@@ -14,49 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pyflink.table.ml.model_handler import ModelHandler, PredictionResult, ModelMetadata, PreProcessingModelHandler, PostProcessingModelHandler
-from pyflink.table.ml.model_handler_factory import (
-    ModelHandlerFactory, 
-    ModelHandlerRegistry,
-    get_model_handler_factory,
-    get_available_model_handler_factories,
-    create_model_handler_from_config,
-    reload_model_handler_factories,
-    get_supported_types_for_model_type,
-    list_model_handler_factories_info
-)
+"""Simplified PyFlink ML module.
+
+This module provides a minimal interface for ML inference in PyFlink.
+"""
+
+from pyflink.table.ml.model_handler import ModelHandler, PredictionResult
 from pyflink.table.ml.model_inference_table_function import (
     ModelInferenceTableFunction,
-    ModelInferenceUDTF,
-    create_pytorch_inference_udtf,
     model_inference_table_function_udtf
 )
 
-# PyTorch implementations (optional import)
+# PyTorch implementation (optional import)
 try:
-    from pyflink.table.ml.pytorch_model_handler import (
-        PyTorchModelHandlerTensor,
-        PyTorchModelHandlerKeyedTensor,
-        PyTorchModelHandlerRow
-    )
-    from pyflink.table.ml.pytorch_model_handler_factory import (
-        PyTorchModelHandlerFactory,
-        create_pytorch_model_handler_factory
-    )
+    from pyflink.table.ml.pytorch_model_handler import PyTorchModelHandler
     _PYTORCH_AVAILABLE = True
-    _PYTORCH_CLASSES = [
-        'PyTorchModelHandlerTensor',
-        'PyTorchModelHandlerKeyedTensor', 
-        'PyTorchModelHandlerRow',
-        'PyTorchModelHandlerFactory',
-        'create_pytorch_model_handler_factory'
-    ]
-    
-    # Manually register PyTorch factory since entry points aren't available in development
-    from pyflink.table.ml.model_handler_factory import _registry
-    _pytorch_factory = create_pytorch_model_handler_factory()
-    _registry._factories[_pytorch_factory.get_factory_identifier()] = _pytorch_factory
-    
+    _PYTORCH_CLASSES = ['PyTorchModelHandler']
 except ImportError:
     _PYTORCH_AVAILABLE = False
     _PYTORCH_CLASSES = []
@@ -64,24 +37,20 @@ except ImportError:
 __all__ = [
     # Core interfaces
     'ModelHandler',
-    'PredictionResult', 
-    'ModelMetadata',
-    'PreProcessingModelHandler',
-    'PostProcessingModelHandler',
+    'PredictionResult',
     
-    # Factory system
-    'ModelHandlerFactory',
-    'ModelHandlerRegistry', 
-    'get_model_handler_factory',
-    'get_available_model_handler_factories',
-    'create_model_handler_from_config',
-    'reload_model_handler_factories',
-    'get_supported_types_for_model_type',
-    'list_model_handler_factories_info',
-    
-    # Table Functions
+    # Table Function
     'ModelInferenceTableFunction',
-    'ModelInferenceUDTF',
-    'create_pytorch_inference_udtf',
     'model_inference_table_function_udtf'
 ] + _PYTORCH_CLASSES
+
+
+from pyflink.table.ml.pytorch_model_handler_factory import (
+    PyTorchModelHandlerFactory,
+    create_pytorch_model_handler_factory
+)
+# Manually register PyTorch factory since entry points aren't available in development
+from pyflink.table.ml.model_handler_factory import _registry
+
+_pytorch_factory = create_pytorch_model_handler_factory()
+_registry._factories[_pytorch_factory.get_factory_identifier()] = _pytorch_factory
