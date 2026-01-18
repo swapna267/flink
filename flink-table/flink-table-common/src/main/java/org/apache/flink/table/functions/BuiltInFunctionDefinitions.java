@@ -2932,6 +2932,14 @@ public final class BuiltInFunctionDefinitions {
                     .runtimeClass(
                             "org.apache.flink.table.runtime.functions.scalar.TryParseJsonFunction")
                     .build();
+    public static final BuiltInFunctionDefinition TO_JSON =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("TO_JSON")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(sequence(logical(LogicalTypeRoot.VARIANT)))
+                    .outputTypeStrategy(nullableIfArgs(explicit(DataTypes.STRING())))
+                    .runtimeClass("org.apache.flink.table.runtime.functions.scalar.ToJsonFunction")
+                    .build();
 
     // --------------------------------------------------------------------------------------------
     // Other functions

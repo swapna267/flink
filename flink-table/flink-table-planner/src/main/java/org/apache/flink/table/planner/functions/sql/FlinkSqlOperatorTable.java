@@ -1324,6 +1324,16 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
                             OperandTypes.family(SqlTypeFamily.STRING),
                             OperandTypes.family(SqlTypeFamily.STRING, SqlTypeFamily.BOOLEAN)),
                     SqlFunctionCategory.SYSTEM);
+    public static final SqlFunction TO_JSON =
+            new SqlFunction(
+                    "TO_JSON",
+                    SqlKind.OTHER_FUNCTION,
+                    ReturnTypes.cascade(
+                            ReturnTypes.explicit(SqlTypeName.VARCHAR),
+                            SqlTypeTransforms.TO_NULLABLE),
+                    null,
+                    OperandTypes.family(SqlTypeFamily.VARIANT),
+                    SqlFunctionCategory.SYSTEM);
 
     // WINDOW TABLE FUNCTIONS
     // use the definitions in Flink, because we have different return types

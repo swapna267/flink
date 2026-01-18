@@ -156,6 +156,12 @@ class BinaryVariantTest {
         assertThat(variant.getField("bb").getByte()).isEqualTo((byte) 10);
         assertThat(variant.getField("non_exist")).isNull();
 
+        // Test new methods
+        assertThat(variant.getFieldNames()).containsExactlyInAnyOrder("list", "object", "bb");
+        assertThat(variant.getField("list").getArraySize()).isEqualTo(2);
+        assertThat(variant.getField("object").getFieldNames())
+                .containsExactlyInAnyOrder("ss", "ff");
+
         BinaryVariantBuilder.VariantObjectBuilder objectBuilder = builder.object();
 
         for (int i = 0; i < 100; i++) {

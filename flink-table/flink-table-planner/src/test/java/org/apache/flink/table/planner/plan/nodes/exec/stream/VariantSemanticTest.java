@@ -108,6 +108,48 @@ public class VariantSemanticTest extends SemanticTestBase {
                     .runSql("INSERT INTO sink_t SELECT TRY_PARSE_JSON(v) FROM t")
                     .build();
 
+    static final TableTestProgram TO_JSON_OF_VARIANT =
+            TableTestProgram.of(
+                            "to-json-of-variant",
+                            "validates TO_JSON converts variant to JSON string")
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("t")
+                                    .addSchema("v VARIANT")
+                                    .producedValues(
+                                            Row.of(BUILDER.of(1)),
+                                            Row.of(BUILDER.of("hello")),
+                                            Row.of(
+                                                    BUILDER.object()
+                                                            .add("key", BUILDER.of("value"))
+                                                            .build()))
+                                    .build())
+                    .setupTableSink(
+                            SinkTestStep.newBuilder("sink_t")
+                                    .addSchema("json_str STRING")
+                                    .consumedValues(
+                                            Row.of("1"),
+                                            Row.of("\"hello\""),
+                                            Row.of("{\"key\":\"value\"}"))
+                                    .build())
+                    .runSql("INSERT INTO sink_t SELECT TO_JSON(v) FROM t")
+                    .build();
+
+    static final TableTestProgram TO_JSON_OF_NULL =
+            TableTestProgram.of(
+                            "to-json-of-null", "validates TO_JSON handles null variant properly")
+                    .setupTableSource(
+                            SourceTestStep.newBuilder("t")
+                                    .addSchema("v VARIANT")
+                                    .producedValues(Row.of(BUILDER.of(1)), Row.of((Variant) null))
+                                    .build())
+                    .setupTableSink(
+                            SinkTestStep.newBuilder("sink_t")
+                                    .addSchema("json_str STRING")
+                                    .consumedValues(Row.of("1"), Row.of((String) null))
+                                    .build())
+                    .runSql("INSERT INTO sink_t SELECT TO_JSON(v) FROM t")
+                    .build();
+
     static final TableTestProgram BUILTIN_AGG_WITH_RETRACTION;
 
     static final TableTestProgram BUILTIN_AGG;
@@ -260,6 +302,8 @@ public class VariantSemanticTest extends SemanticTestBase {
                 PARSE_JSON_OF_NULL,
                 PARSE_JSON_FAIL_MALFORMED_JSON,
                 TRY_PARSE_JSON_HANDLE_MALFORMED_JSON,
+                TO_JSON_OF_VARIANT,
+                TO_JSON_OF_NULL,
                 BUILTIN_AGG,
                 BUILTIN_AGG_WITH_RETRACTION,
                 VARIANT_AS_UDF_ARG,
